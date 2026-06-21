@@ -1,6 +1,7 @@
 package paopao.toml;
 
 import Reflect;
+import Type;
 
 class Parser {
 	private final tokens:Array<Token>;
@@ -40,11 +41,13 @@ class Parser {
 
 	private function parseArrayTable(root:Dynamic):Dynamic {
 		var parts:Array<String> = [];
+		var partTokens:Array<Token> = [];
 
 		while (!check(TokenType.RBRACKET)) {
-			var token = consume(TokenType.IDENTIFIER, "Expected table name");
+			var token = consumeKey("Expected table name");
 
 			parts.push(token.value);
+			partTokens.push(token);
 
 			if (match(TokenType.DOT))
 				continue;
@@ -58,17 +61,16 @@ class Parser {
 
 		var current:Dynamic = root;
 
+		// Walk every segment except the last. If an ancestor is itself an
+		// array of tables (e.g. [[fruits]] before [[fruits.varieties]]),
+		// new headers always refer to that array's most recently defined
+		// element, never to the array itself.
 		for (i in 0...parts.length - 1) {
-			var part = parts[i];
-
-			if (!Reflect.hasField(current, part)) {
-				Reflect.setField(current, part, {});
-			}
-
-			current = Reflect.field(current, part);
+			current = descend(current, parts[i], partTokens[i]);
 		}
 
 		var finalName = parts[parts.length - 1];
+		var finalToken = partTokens[partTokens.length - 1];
 
 		var arr:Array<Dynamic>;
 
@@ -77,7 +79,13 @@ class Parser {
 
 			Reflect.setField(current, finalName, arr);
 		} else {
-			arr = cast Reflect.field(current, finalName);
+			var existing = Reflect.field(current, finalName);
+
+			if (!Std.isOfType(existing, Array)) {
+				throw error(finalToken, 'Cannot define "$finalName" as an array of tables; it is already defined as a different type');
+			}
+
+			arr = cast existing;
 		}
 
 		var obj:Dynamic = {};
@@ -91,11 +99,13 @@ class Parser {
 
 	private function parseTable(root:Dynamic):Dynamic {
 		var parts:Array<String> = [];
+		var partTokens:Array<Token> = [];
 
 		while (!check(TokenType.RBRACKET)) {
-			var token = consume(TokenType.IDENTIFIER, "Expected table name");
+			var token = consumeKey("Expected table name");
 
 			parts.push(token.value);
+			partTokens.push(token);
 
 			if (match(TokenType.DOT))
 				continue;
@@ -107,12 +117,8 @@ class Parser {
 
 		var current:Dynamic = root;
 
-		for (part in parts) {
-			if (!Reflect.hasField(current, part)) {
-				Reflect.setField(current, part, {});
-			}
-
-			current = Reflect.field(current, part);
+		for (i in 0...parts.length) {
+			current = descend(current, parts[i], partTokens[i]);
 		}
 
 		skipNewlines();
@@ -122,37 +128,37 @@ class Parser {
 
 	private function parseKeyValue(table:Dynamic):Void {
 		var keyParts:Array<String> = [];
+		var keyTokens:Array<Token> = [];
 
-		var first = consume(TokenType.IDENTIFIER, "Expected key");
+		var first = consumeKey("Expected key");
 
 		keyParts.push(first.value);
+		keyTokens.push(first);
 
 		while (match(TokenType.DOT)) {
-			var part = consume(TokenType.IDENTIFIER, "Expected key after '.'");
+			var part = consumeKey("Expected key after '.'");
 
 			keyParts.push(part.value);
+			keyTokens.push(part);
 		}
 
 		consume(TokenType.EQUALS, "Expected '='");
 
 		var value = parseValue();
 
-		assignDottedKey(table, keyParts, value);
+		assignDottedKey(table, keyParts, keyTokens, value);
 
 		skipNewlines();
 	}
 
-	private function assignDottedKey(root:Dynamic, parts:Array<String>, value:Dynamic):Void {
+	private function assignDottedKey(root:Dynamic, parts:Array<String>, partTokens:Array<Token>, value:Dynamic):Void {
 		var current = root;
 
+		// Same rule as table headers: if an earlier segment of a dotted
+		// key already resolves to an array of tables, the assignment
+		// belongs to that array's most recently defined element.
 		for (i in 0...parts.length - 1) {
-			var part = parts[i];
-
-			if (!Reflect.hasField(current, part)) {
-				Reflect.setField(current, part, {});
-			}
-
-			current = Reflect.field(current, part);
+			current = descend(current, parts[i], partTokens[i]);
 		}
 
 		Reflect.setField(current, parts[parts.length - 1], value);
@@ -212,7 +218,7 @@ class Parser {
 		skipNewlines();
 
 		while (!check(TokenType.RBRACE)) {
-			var key = consume(TokenType.IDENTIFIER, "Expected inline table key");
+			var key = consumeKey("Expected inline table key");
 
 			consume(TokenType.EQUALS, "Expected '='");
 
@@ -233,6 +239,73 @@ class Parser {
 		consume(TokenType.RBRACE, "Expected '}'");
 
 		return obj;
+	}
+
+	/**
+	 * Resolve one segment of a dotted path (table header or dotted key)
+	 * against `parent`, creating an intermediate table if it doesn't exist
+	 * yet. If the segment already resolves to an array of tables, descend
+	 * into that array's most recently defined element rather than the
+	 * array itself — this is what makes `[fruits.physical]` attach to the
+	 * last `[[fruits]]` entry, and likewise for nested `[[fruits.varieties]]`.
+	 * Throws a clean TomlError (instead of an opaque cast failure) if the
+	 * segment already holds a non-table value.
+	 */
+	private function descend(parent:Dynamic, part:String, token:Token):Dynamic {
+		if (!Reflect.hasField(parent, part)) {
+			var table:Dynamic = {};
+
+			Reflect.setField(parent, part, table);
+
+			return table;
+		}
+
+		var value = Reflect.field(parent, part);
+
+		if (Std.isOfType(value, Array)) {
+			var arr:Array<Dynamic> = cast value;
+
+			if (arr.length == 0 || !isTableLike(arr[arr.length - 1])) {
+				throw error(token, 'Cannot use "${part}" as a table: it is an array, not an array of tables');
+			}
+
+			return arr[arr.length - 1];
+		}
+
+		if (!isTableLike(value)) {
+			throw error(token, 'Cannot redefine "${part}" as a table: it is already defined as a different type');
+		}
+
+		return value;
+	}
+
+	private function isTableLike(value:Dynamic):Bool {
+		if (value == null)
+			return false;
+
+		if (Std.isOfType(value, String))
+			return false;
+
+		if (Std.isOfType(value, Bool))
+			return false;
+
+		if (Std.isOfType(value, Int))
+			return false;
+
+		if (Std.isOfType(value, Float))
+			return false;
+
+		if (Std.isOfType(value, Array))
+			return false;
+
+		return Type.typeof(value) == TObject;
+	}
+
+	private function consumeKey(message:String):Token {
+		if (check(TokenType.IDENTIFIER) || check(TokenType.STRING))
+			return advance();
+
+		throw error(peek(), message);
 	}
 
 	private inline function isAtEnd():Bool {

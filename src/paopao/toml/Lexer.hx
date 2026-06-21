@@ -216,8 +216,24 @@ class Lexer {
 				case " " | "\t" | "\r" | "\n":
 					break;
 
-				case "," | "=" | "[" | "]" | "{" | "}":
+				case "," | "=" | "[" | "]" | "{" | "}" | "\"" | "'":
 					break;
+
+				case ".":
+					// A dot right before a quote belongs to the outer
+					// tokenizer (DOT token, then a fresh STRING token for
+					// the quoted segment) rather than this buffer — e.g.
+					// the "." in dog."tater.man" must not be swallowed
+					// here, or the quoted segment gets merged into a
+					// garbled bare key. A dot followed by anything else
+					// (a digit, in a float; another bare key char) stays
+					// buffered as before.
+					if (peekNext() == "\"" || peekNext() == "'") {
+						break;
+					}
+
+					buf.add(c);
+					advance();
 
 				case "#":
 					break;
@@ -246,6 +262,10 @@ class Lexer {
 			return [new Token(TokenType.FLOAT, value, startLine, startColumn)];
 		}
 
+		// Not a recognized literal: treat as a bare key, possibly dotted
+		// (e.g. "database.replica" in [database.replica] or a.b = 1).
+		// Split it into IDENTIFIER/DOT/IDENTIFIER... so the parser sees
+		// the same token shape it gets for quoted/spaced dotted keys.
 		if (value.indexOf(".") >= 0) {
 			var result:Array<Token> = [];
 			var parts = value.split(".");
