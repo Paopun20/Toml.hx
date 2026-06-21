@@ -1,0 +1,60 @@
+# Test various TOML v1.1.0 features
+
+# Basic strings with escape sequences
+basic_string = "I'm a string. \"You can quote me\". Name\tJos\u00E9\nLocation\tSF."
+
+# Multi-line basic strings
+multi_line = """
+Roses are red
+Violets are blue"""
+
+# Literal strings (no escaping)
+literal_string = 'C:\Users\nodejs\templates'
+
+# Multi-line literal strings
+multi_literal = '''
+The first newline is
+trimmed in literal strings.'''
+
+# Integers with underscores
+int_underscore = 1_000_000
+
+# Hex, octal, binary integers
+hex_int = 0xDEADBEEF
+oct_int = 0o755
+bin_int = 0b11010110
+
+# Floats with exponent
+float_exp = 5e+22
+float_both = 6.626e-34
+
+# Special floats
+special_inf = inf
+special_nan = nan
+
+# Date-time formats
+odt1 = 1979-05-27T07:32:00Z
+odt2 = 1979-05-27T00:32:00-07:00
+ldt1 = 1979-05-27T07:32:00
+ld1 = 1979-05-27
+lt1 = 07:32:00
+
+# Arrays with trailing comma
+array_trailing = [
+  1,
+  2,
+]
+
+# Mixed type array
+mixed_array = [ 0.1, 0.2, 1, 2 ]
+
+# Inline table with trailing comma
+inline_trailing = { x = 1, y = 2, }
+
+# Quoted keys
+"127.0.0.1" = "value"
+"key with spaces" = "another value"
+
+# Dotted keys
+physical.color = "orange"
+physical.shape = "round"
