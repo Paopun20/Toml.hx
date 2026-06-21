@@ -28,7 +28,7 @@ haxelib install toml.hx
 ### Development
 
 ```bash
-git clone https://github.com/yourname/toml-hx.git
+git clone https://github.com/Paopun20/toml.hx
 ```
 
 ## Usage
