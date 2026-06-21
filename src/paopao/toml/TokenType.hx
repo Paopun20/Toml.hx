@@ -1,31 +1,31 @@
 package paopao.toml;
 
 enum TokenType {
-    EOF;
+	EOF;
 
-    // literals
-    STRING;
-    INTEGER;
-    FLOAT;
-    BOOLEAN;
-    DATETIME;
+	// literals
+	STRING;
+	INTEGER;
+	FLOAT;
+	BOOLEAN;
+	DATETIME;
 
-    // identifiers / keys
-    IDENTIFIER;
+	// identifiers / keys
+	IDENTIFIER;
 
-    // punctuation
-    DOT;
-    COMMA;
-    EQUALS;
+	// punctuation
+	DOT;
+	COMMA;
+	EQUALS;
 
-    // brackets
-    LBRACKET;
-    RBRACKET;
+	// brackets
+	LBRACKET;
+	RBRACKET;
 
-    // braces
-    LBRACE;
-    RBRACE;
+	// braces
+	LBRACE;
+	RBRACE;
 
-    // special
-    NEWLINE;
+	// special
+	NEWLINE;
 }
