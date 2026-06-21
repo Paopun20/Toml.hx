@@ -1,6 +1,6 @@
 {
   "name": "toml.hx",
-  "url": "",
+  "url": "https://github.com/Paopun20/toml.hx",
   "license": "MIT",
   "tags": [
     "toml",
@@ -12,6 +12,6 @@
   "classPath": "src",
   "releasenote": "Initial release",
   "contributors": [
-    "yourname"
+    "paopaodev"
   ]
 }
