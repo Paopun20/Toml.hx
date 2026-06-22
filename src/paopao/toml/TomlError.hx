@@ -16,7 +16,6 @@ class TomlError extends Exception {
 		this.column = column;
 	}
 
-	static function format(message:String, line:Int, column:Int):String {
+	static function format(message:String, line:Int, column:Int):String
 		return message + " at line " + line + ", column " + column;
-	}
 }

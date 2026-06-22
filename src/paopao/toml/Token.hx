@@ -1,31 +1,14 @@
 package paopao.toml;
 
-/**
- * Single token emitted by the lexer.
- */
-class Token {
+final class Token {
 	public final type:TokenType;
 
 	/**
-	 * Raw value associated with token.
-	 *
-	 * STRING    -> String
-	 * INTEGER   -> String
-	 * FLOAT     -> String
-	 * BOOLEAN   -> String
-	 * DATETIME  -> String
-	 * IDENTIFIER-> String
+	 * Raw value associated with token
 	 */
 	public final value:String;
 
-	/**
-	 * 1-based source line.
-	 */
 	public final line:Int;
-
-	/**
-	 * 1-based source column.
-	 */
 	public final column:Int;
 
 	public function new(type:TokenType, value:String, line:Int, column:Int) {
@@ -35,7 +18,6 @@ class Token {
 		this.column = column;
 	}
 
-	public function toString():String {
+	public function toString():String
 		return 'Token($type, "$value", $line:$column)';
-	}
 }

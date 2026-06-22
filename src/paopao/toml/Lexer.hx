@@ -1,5 +1,6 @@
 package paopao.toml;
 
+@:analyzer(optimize, local_dce, fusion, user_var_fusion)
 class Lexer {
 	private final source:String;
 
@@ -11,7 +12,7 @@ class Lexer {
 		this.source = source;
 	}
 
-	public function tokenize():Array<Token> {
+	public dynamic function tokenize():Array<Token> {
 		var tokens:Array<Token> = [];
 
 		while (!isAtEnd()) {
@@ -60,19 +61,26 @@ class Lexer {
 					tokens.push(readString());
 
 				default:
-					if (isIdentifierStart(c)) {
-						for (token in readIdentifierOrValue()) {
+					if (!isAtEnd() && isIdentifierStartCode(source.charCodeAt(pos))) {
+						for (token in readIdentifierOrValue())
 							tokens.push(token);
-						}
-					} else {
+					} else
 						throw error('Unexpected character "$c"');
-					}
 			}
 		}
 
 		tokens.push(new Token(TokenType.EOF, "", line, column));
 
 		return tokens;
+	}
+
+	// Avoid the charAt -> 1-char String -> charCodeAt round trip in the hot check.
+	private inline function isIdentifierStartCode(code:Int):Bool {
+		return (code >= 65 && code <= 90) // A-Z
+			|| (code >= 97 && code <= 122) // a-z
+			|| code == 95 // _
+			|| code == 45 // -
+			|| (code >= 48 && code <= 57); // 0-9
 	}
 
 	private inline function isAtEnd():Bool {
@@ -108,19 +116,15 @@ class Lexer {
 		return c;
 	}
 
-	private inline function makeToken(type:TokenType, value:String):Token {
+	private inline function makeToken(type:TokenType, value:String):Token
 		return new Token(type, value, line, column);
-	}
 
-	private inline function error(message:String):TomlError {
+	private inline function error(message:String):TomlError
 		return new TomlError(message, line, column);
-	}
 
-	private function skipComment():Void {
-		while (!isAtEnd() && peek() != "\n") {
+	private function skipComment():Void
+		while (!isAtEnd() && peek() != "\n")
 			advance();
-		}
-	}
 
 	private function isIdentifierStart(c:String):Bool {
 		if (c.length == 0)
@@ -139,15 +143,13 @@ class Lexer {
 		var hex = "";
 
 		for (i in 0...length) {
-			if (isAtEnd()) {
+			if (isAtEnd())
 				throw new TomlError("Unexpected end of unicode escape", line, column);
-			}
 
 			var c = advance();
 
-			if (!~/^[0-9A-Fa-f]$/.match(c)) {
+			if (!~/^[0-9A-Fa-f]$/.match(c))
 				throw new TomlError('Invalid hex digit "$c"', line, column);
-			}
 
 			hex += c;
 		}
@@ -168,14 +170,12 @@ class Lexer {
 		while (!isAtEnd()) {
 			var c = advance();
 
-			if (c == "\"") {
+			if (c == "\"")
 				return new Token(TokenType.STRING, buf.toString(), startLine, startColumn);
-			}
 
 			if (c == "\\") {
-				if (isAtEnd()) {
+				if (isAtEnd())
 					throw new TomlError("Unexpected end of string", line, column);
-				}
 
 				var escaped = advance();
 
@@ -226,22 +226,18 @@ class Lexer {
 		throw new TomlError("Unterminated string", startLine, startColumn);
 	}
 
-	private function isInteger(value:String):Bool {
-		var regex = ~/^[+-]?[0-9]+$/;
-		return regex.match(value);
-	}
+	private static final INT_RE = ~/^[+-]?[0-9]+$/;
+	private static final FLOAT_RE = ~/^[+-]?[0-9]+\.[0-9]+$/;
+	private static final DATETIME_RE = ~/^[0-9]{4}-[0-9]{2}-[0-9]{2}/;
 
-	private function isFloat(value:String):Bool {
-		var regex = ~/^[+-]?[0-9]+\.[0-9]+$/;
+	private function isInteger(value:String):Bool
+		return INT_RE.match(value);
 
-		return regex.match(value);
-	}
+	private function isFloat(value:String):Bool
+		return FLOAT_RE.match(value);
 
-	private function isDateTime(value:String):Bool {
-		var regex = ~/^[0-9]{4}-[0-9]{2}-[0-9]{2}/;
-
-		return regex.match(value);
-	}
+	private function isDateTime(value:String):Bool
+		return DATETIME_RE.match(value);
 
 	private function readIdentifierOrValue():Array<Token> {
 		var startLine = line;
@@ -286,21 +282,17 @@ class Lexer {
 
 		var value = buf.toString();
 
-		if (value == "true" || value == "false") {
+		if (value == "true" || value == "false")
 			return [new Token(TokenType.BOOLEAN, value, startLine, startColumn)];
-		}
 
-		if (isDateTime(value)) {
+		if (isDateTime(value))
 			return [new Token(TokenType.DATETIME, value, startLine, startColumn)];
-		}
 
-		if (isInteger(value)) {
+		if (isInteger(value))
 			return [new Token(TokenType.INTEGER, value, startLine, startColumn)];
-		}
 
-		if (isFloat(value)) {
+		if (isFloat(value))
 			return [new Token(TokenType.FLOAT, value, startLine, startColumn)];
-		}
 
 		// Not a recognized literal: treat as a bare key, possibly dotted
 		// (e.g. "database.replica" in [database.replica] or a.b = 1).
@@ -313,9 +305,8 @@ class Lexer {
 			for (i in 0...parts.length) {
 				result.push(new Token(TokenType.IDENTIFIER, parts[i], startLine, startColumn));
 
-				if (i < parts.length - 1) {
+				if (i < parts.length - 1)
 					result.push(new Token(TokenType.DOT, ".", startLine, startColumn));
-				}
 			}
 
 			return result;

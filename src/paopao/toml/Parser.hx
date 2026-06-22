@@ -4,6 +4,7 @@ import Reflect;
 import Type;
 import Date;
 
+@:analyzer(optimize, local_dce, fusion, user_var_fusion)
 class Parser {
 	private final tokens:Array<Token>;
 	private final definedTables:Map<String, Bool> = [];
@@ -13,7 +14,7 @@ class Parser {
 		this.tokens = tokens;
 	}
 
-	public function parse():Dynamic {
+	public dynamic function parse():Dynamic {
 		var root:Dynamic = {};
 		var currentTable:Dynamic = root;
 
@@ -28,9 +29,8 @@ class Parser {
 
 				if (match(TokenType.LBRACKET)) {
 					currentTable = parseArrayTable(root);
-				} else {
+				} else
 					currentTable = parseTable(root);
-				}
 
 				continue;
 			}
@@ -58,29 +58,22 @@ class Parser {
 		}
 
 		consume(TokenType.RBRACKET, "Expected ']'");
-
 		consume(TokenType.RBRACKET, "Expected second ']'");
 
-		if (parts.length == 0) {
+		if (parts.length == 0)
 			throw error(previous(), "Expected table name");
-		}
 
 		var current:Dynamic = root;
 
-		// Walk every segment except the last. If an ancestor is itself an
-		// array of tables (e.g. [[fruits]] before [[fruits.varieties]]),
-		// new headers always refer to that array's most recently defined
-		// element, never to the array itself.
-		for (i in 0...parts.length - 1) {
+		for (i in 0...parts.length - 1)
 			current = descend(current, parts[i], partTokens[i]);
-		}
 
 		var finalName = parts[parts.length - 1];
 		var finalToken = partTokens[partTokens.length - 1];
+		var path = parts.join(".");
 
-		if (definedTables.exists(parts.join("."))) {
-			throw error(finalToken, '"${parts.join(".")}" is already defined as a table');
-		}
+		if (definedTables.exists(path))
+			throw error(finalToken, '"$path" is already defined as a table');
 
 		var arr:Array<Dynamic>;
 
@@ -91,9 +84,8 @@ class Parser {
 		} else {
 			var existing = Reflect.field(current, finalName);
 
-			if (!Std.isOfType(existing, Array)) {
+			if (!Std.isOfType(existing, Array))
 				throw error(finalToken, 'Cannot define "$finalName" as an array of tables; it is already defined as a different type');
-			}
 
 			arr = cast existing;
 		}
@@ -125,23 +117,20 @@ class Parser {
 
 		consume(TokenType.RBRACKET, "Expected ']'");
 
-		if (parts.length == 0) {
+		if (parts.length == 0)
 			throw error(previous(), "Expected table name");
-		}
 
 		var path = parts.join(".");
 
-		if (definedTables.exists(path)) {
+		if (definedTables.exists(path))
 			throw error(partTokens[partTokens.length - 1], 'Table "$path" already defined');
-		}
 
 		definedTables.set(path, true);
 
 		var current:Dynamic = root;
 
-		for (i in 0...parts.length) {
+		for (i in 0...parts.length)
 			current = descend(current, parts[i], partTokens[i]);
-		}
 
 		skipNewlines();
 
@@ -170,9 +159,8 @@ class Parser {
 
 		assignDottedKey(table, keyParts, keyTokens, value);
 
-		if (!check(TokenType.NEWLINE) && !check(TokenType.EOF)) {
+		if (!check(TokenType.NEWLINE) && !check(TokenType.EOF))
 			throw error(peek(), "Expected newline after key/value pair");
-		}
 
 		skipNewlines();
 	}
@@ -183,23 +171,60 @@ class Parser {
 		// Same rule as table headers: if an earlier segment of a dotted
 		// key already resolves to an array of tables, the assignment
 		// belongs to that array's most recently defined element.
-		for (i in 0...parts.length - 1) {
+		for (i in 0...parts.length - 1)
 			current = descend(current, parts[i], partTokens[i]);
-		}
 
 		var finalKey = parts[parts.length - 1];
 
-		if (Reflect.hasField(current, finalKey)) {
+		if (Reflect.hasField(current, finalKey))
 			throw error(partTokens[partTokens.length - 1], 'Duplicate key "$finalKey"');
-		}
 
 		var existing = Reflect.field(current, finalKey);
 
-		if (existing != null && isTableLike(existing)) {
+		if (existing != null && isTableLike(existing))
 			throw error(partTokens[partTokens.length - 1], 'Cannot redefine table "$finalKey" as a value');
-		}
 
 		Reflect.setField(current, finalKey, value);
+	}
+
+	private static function dateTimeToDate(value:String):Date {
+		var result = value;
+
+		result = StringTools.replace(result, "T", " ");
+
+		// remove fractional seconds
+		var dot = result.indexOf(".");
+		if (dot != -1) {
+			var tz = result.indexOf("Z", dot);
+
+			if (tz == -1) {
+				var plus = result.indexOf("+", dot);
+				var minus = result.lastIndexOf("-");
+
+				tz = plus != -1 ? plus : minus;
+			}
+
+			if (tz != -1)
+				result = result.substr(0, dot) + result.substr(tz);
+			else
+				result = result.substr(0, dot);
+		}
+
+		// remove timezone
+		if (StringTools.endsWith(result, "Z"))
+			result = result.substr(0, result.length - 1);
+
+		var plus = result.lastIndexOf("+");
+
+		if (plus > 10)
+			result = result.substr(0, plus);
+
+		var minus = result.lastIndexOf("-");
+
+		if (minus > 10)
+			result = result.substr(0, minus);
+
+		return Date.fromString(result);
 	}
 
 	private function parseValue():Dynamic {
@@ -216,7 +241,7 @@ class Parser {
 			return previous().value == "true";
 
 		if (match(TokenType.DATETIME))
-			return previous().value;
+			return dateTimeToDate(previous().value);
 
 		if (match(TokenType.LBRACKET))
 			return parseArray();
@@ -258,9 +283,8 @@ class Parser {
 		while (!check(TokenType.RBRACE)) {
 			var key = consumeKey("Expected inline table key");
 
-			if (Reflect.hasField(obj, key.value)) {
+			if (Reflect.hasField(obj, key.value))
 				throw error(key, 'Duplicate key "${key.value}"');
-			}
 
 			consume(TokenType.EQUALS, "Expected '='");
 
@@ -307,16 +331,14 @@ class Parser {
 		if (Std.isOfType(value, Array)) {
 			var arr:Array<Dynamic> = cast value;
 
-			if (arr.length == 0 || !isTableLike(arr[arr.length - 1])) {
+			if (arr.length == 0 || !isTableLike(arr[arr.length - 1]))
 				throw error(token, 'Cannot use "${part}" as a table: it is an array, not an array of tables');
-			}
 
 			return arr[arr.length - 1];
 		}
 
-		if (!isTableLike(value)) {
+		if (!isTableLike(value))
 			throw error(token, 'Cannot redefine "${part}" as a table: it is already defined as a different type');
-		}
 
 		return value;
 	}
@@ -350,17 +372,14 @@ class Parser {
 		throw error(peek(), message);
 	}
 
-	private inline function isAtEnd():Bool {
+	private inline function isAtEnd():Bool
 		return peek().type == TokenType.EOF;
-	}
 
-	private inline function peek():Token {
+	private inline function peek():Token
 		return tokens[current];
-	}
 
-	private inline function previous():Token {
+	private inline function previous():Token
 		return tokens[current - 1];
-	}
 
 	private function advance():Token {
 		if (!isAtEnd())
@@ -392,9 +411,8 @@ class Parser {
 	}
 
 	private function skipNewlines():Void {
-		while (check(TokenType.NEWLINE)) {
+		while (check(TokenType.NEWLINE))
 			advance();
-		}
 	}
 
 	private function error(token:Token, message:String):TomlError {
