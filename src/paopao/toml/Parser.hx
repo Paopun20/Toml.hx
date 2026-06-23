@@ -5,7 +5,7 @@ import Type;
 import Date;
 
 @:analyzer(optimize, local_dce, fusion, user_var_fusion)
-class Parser {
+final class Parser {
 	private final tokens:Array<Token>;
 	private final definedTables:Map<String, Bool> = [];
 	private var current:Int = 0;

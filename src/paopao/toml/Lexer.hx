@@ -1,7 +1,7 @@
 package paopao.toml;
 
 @:analyzer(optimize, local_dce, fusion, user_var_fusion)
-class Lexer {
+final class Lexer {
 	private final source:String;
 
 	private var pos:Int = 0;
