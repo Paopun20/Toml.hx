@@ -2,6 +2,7 @@ package paopao.toml;
 
 import Reflect;
 import Type;
+import paopao.toml.TomlDateTime;
 import Date;
 
 @:analyzer(optimize, local_dce, fusion, user_var_fusion)
@@ -57,8 +58,11 @@ final class Parser {
 			parts.push(token.value);
 			partTokens.push(token);
 
-			if (match(TokenType.DOT))
+			if (match(TokenType.DOT)) {
+				if (check(TokenType.RBRACKET))
+					throw error(previous(), "Trailing dot in table name");
 				continue;
+			}
 
 			break;
 		}
@@ -77,13 +81,13 @@ final class Parser {
 		var current:Dynamic = root;
 
 		for (i in 0...parts.length - 1)
-			current = descend(current, parts[i], partTokens[i], parts.slice(0, i + 1).join("."));
+			current = descend(current, parts[i], partTokens[i], parts.slice(0, i + 1));
 
 		var finalName = parts[parts.length - 1];
 		var finalToken = partTokens[partTokens.length - 1];
 		var path = parts.join(".");
 
-		if (definedTables.exists(path))
+		if (definedTables.exists(pathKey(parts)))
 			throw error(finalToken, '"$path" is already defined as a table');
 
 		var arr:Array<Dynamic>;
@@ -95,13 +99,13 @@ final class Parser {
 		} else {
 			var existing = Reflect.field(current, finalName);
 
-			if (!Std.isOfType(existing, Array) || !arrayTables.exists(path))
+			if (!Std.isOfType(existing, Array) || !arrayTables.exists(pathKey(parts)))
 				throw error(finalToken, 'Cannot define "$finalName" as an array of tables; it is already defined as a different type');
 
 			arr = cast existing;
 		}
 
-		arrayTables.set(path, true);
+		arrayTables.set(pathKey(parts), true);
 
 		var obj:Dynamic = {};
 
@@ -123,8 +127,11 @@ final class Parser {
 			parts.push(token.value);
 			partTokens.push(token);
 
-			if (match(TokenType.DOT))
+			if (match(TokenType.DOT)) {
+				if (check(TokenType.RBRACKET))
+					throw error(previous(), "Trailing dot in table name");
 				continue;
+			}
 
 			break;
 		}
@@ -136,16 +143,24 @@ final class Parser {
 			throw error(previous(), "Expected table name");
 
 		var path = parts.join(".");
+		var pkey = pathKey(parts);
 
-		if (definedTables.exists(path) || sealedTables.exists(path) || arrayTables.exists(path))
+		// Check if this exact path was already defined as a table.
+		// Skip the check if parent is an array table (sub-tables within
+		// array elements are scoped to that element).
+		var parentKey = parts.length > 1 ? pathKey(parts.slice(0, parts.length - 1)) : "";
+		var isInArrayTable = parentKey != "" && arrayTables.exists(parentKey);
+
+		if (!isInArrayTable && (definedTables.exists(pkey) || sealedTables.exists(pkey) || arrayTables.exists(pkey)))
 			throw error(partTokens[partTokens.length - 1], 'Table "$path" already defined');
 
-		definedTables.set(path, true);
+		if (!isInArrayTable)
+			definedTables.set(pkey, true);
 
 		var current:Dynamic = root;
 
 		for (i in 0...parts.length)
-			current = descend(current, parts[i], partTokens[i], parts.slice(0, i + 1).join("."));
+			current = descend(current, parts[i], partTokens[i], parts.slice(0, i + 1));
 
 		skipNewlines();
 		currentTablePath = path;
@@ -184,20 +199,19 @@ final class Parser {
 	private function assignDottedKey(root:Dynamic, parts:Array<String>, partTokens:Array<Token>, value:Dynamic, basePath:String):Void {
 		var current = root;
 
-		// Same rule as table headers: if an earlier segment of a dotted
-		// key already resolves to an array of tables, the assignment
-		// belongs to that array's most recently defined element.
 		for (i in 0...parts.length - 1) {
-			var path = joinPath(basePath, parts.slice(0, i + 1));
+			var segParts = splitPath(basePath).concat(parts.slice(0, i + 1));
+			var segPkey = pathKey(segParts);
+			var checkPath = joinPath(basePath, parts.slice(0, i + 1));
 
-			if (definedTables.exists(path))
-				throw error(partTokens[i], 'Cannot append to explicitly defined table "$path" with a dotted key');
+			if (definedTables.exists(segPkey))
+				throw error(partTokens[i], 'Cannot append to explicitly defined table "$checkPath" with a dotted key');
 
-			if (arrayTables.exists(path) && basePath != path && !StringTools.startsWith(basePath, path + "."))
-				throw error(partTokens[i], 'Cannot append to array of tables "$path" from "$basePath"');
+			if (arrayTables.exists(segPkey) && basePath != checkPath && !StringTools.startsWith(basePath, checkPath + "."))
+				throw error(partTokens[i], 'Cannot append to array of tables "$checkPath" from "$basePath"');
 
-			current = descend(current, parts[i], partTokens[i], path);
-			sealedTables.set(path, "dotted");
+			current = descend(current, parts[i], partTokens[i], segParts);
+			sealedTables.set(segPkey, "dotted");
 		}
 
 		var finalKey = parts[parts.length - 1];
@@ -212,48 +226,125 @@ final class Parser {
 
 		Reflect.setField(current, finalKey, value);
 
-		if (isTableLike(value))
-			sealedTables.set(joinPath(basePath, parts), "inline");
+		if (isTableLike(value)) {
+			var allParts = splitPath(basePath).concat(parts);
+			sealedTables.set(pathKey(allParts), "inline");
+		}
 	}
 
-	private static function dateTimeToDate(value:String):Date {
-		var result = value;
+	private static function parseDateTime(value:String):TomlDateTime {
+		var dt = new TomlDateTime();
 
-		result = StringTools.replace(result, "T", " ");
+		// Full datetime with date and time
+		var fullRe = ~/^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:Z|([+-])(\d{2}):(\d{2}))?$/;
+		if (fullRe.match(value)) {
+			dt.year = Std.parseInt(fullRe.matched(1));
+			dt.month = Std.parseInt(fullRe.matched(2));
+			dt.day = Std.parseInt(fullRe.matched(3));
+			dt.hour = Std.parseInt(fullRe.matched(4));
+			dt.minute = Std.parseInt(fullRe.matched(5));
 
-		// remove fractional seconds
-		var dot = result.indexOf(".");
-		if (dot != -1) {
-			var tz = result.indexOf("Z", dot);
+			if (fullRe.matched(6) != null)
+				dt.second = Std.parseInt(fullRe.matched(6));
 
-			if (tz == -1) {
-				var plus = result.indexOf("+", dot);
-				var minus = result.lastIndexOf("-");
-
-				tz = plus != -1 ? plus : minus;
+			var frac = fullRe.matched(7);
+			if (frac != null) {
+				while (frac.length < 9) frac += "0";
+				if (frac.length > 9) frac = frac.substr(0, 9);
+				dt.nanosecond = Std.parseInt(frac);
 			}
 
-			if (tz != -1)
-				result = result.substr(0, dot) + result.substr(tz);
-			else
-				result = result.substr(0, dot);
+			if (fullRe.matched(8) != null) {
+				var sign = fullRe.matched(8) == "+" ? 1 : -1;
+				var hours = Std.parseInt(fullRe.matched(9));
+				var mins = Std.parseInt(fullRe.matched(10));
+				if (hours < 0 || hours > 23)
+					throw 'Invalid offset hours: $hours';
+				if (mins < 0 || mins > 59)
+					throw 'Invalid offset minutes: $mins';
+				dt.offsetMinutes = sign * (hours * 60 + mins);
+			}
+			return dt;
 		}
 
-		// remove timezone
-		if (StringTools.endsWith(result, "Z"))
-			result = result.substr(0, result.length - 1);
+		// Local datetime (same as full but with lowercase z or without timezone)
+		var localRe = ~/^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?([Zz])?$/;
+		if (localRe.match(value)) {
+			dt.year = Std.parseInt(localRe.matched(1));
+			dt.month = Std.parseInt(localRe.matched(2));
+			dt.day = Std.parseInt(localRe.matched(3));
+			dt.hour = Std.parseInt(localRe.matched(4));
+			dt.minute = Std.parseInt(localRe.matched(5));
 
-		var plus = result.lastIndexOf("+");
+			if (localRe.matched(6) != null)
+				dt.second = Std.parseInt(localRe.matched(6));
 
-		if (plus > 10)
-			result = result.substr(0, plus);
+			var frac = localRe.matched(7);
+			if (frac != null) {
+				while (frac.length < 9) frac += "0";
+				if (frac.length > 9) frac = frac.substr(0, 9);
+				dt.nanosecond = Std.parseInt(frac);
+			}
 
-		var minus = result.lastIndexOf("-");
+			if (localRe.matched(8) != null)
+				dt.offsetMinutes = 0;
 
-		if (minus > 10)
-			result = result.substr(0, minus);
+			return dt;
+		}
 
-		return Date.fromString(result);
+		// Time only with optional timezone
+		var timeRe = ~/^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:Z|([+-])(\d{2}):(\d{2}))?$/;
+		if (timeRe.match(value)) {
+			dt.hour = Std.parseInt(timeRe.matched(1));
+			dt.minute = Std.parseInt(timeRe.matched(2));
+
+			if (timeRe.matched(3) != null)
+				dt.second = Std.parseInt(timeRe.matched(3));
+
+			var frac = timeRe.matched(4);
+			if (frac != null) {
+				while (frac.length < 9) frac += "0";
+				if (frac.length > 9) frac = frac.substr(0, 9);
+				dt.nanosecond = Std.parseInt(frac);
+			}
+
+			if (timeRe.matched(5) != null) {
+				var sign = timeRe.matched(5) == "+" ? 1 : -1;
+				var hours = Std.parseInt(timeRe.matched(6));
+				var mins = Std.parseInt(timeRe.matched(7));
+				dt.offsetMinutes = sign * (hours * 60 + mins);
+			}
+			return dt;
+		}
+
+		// Local time only (without timezone)
+		var localTimeRe = ~/^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/;
+		if (localTimeRe.match(value)) {
+			dt.hour = Std.parseInt(localTimeRe.matched(1));
+			dt.minute = Std.parseInt(localTimeRe.matched(2));
+
+			if (localTimeRe.matched(3) != null)
+				dt.second = Std.parseInt(localTimeRe.matched(3));
+
+			var frac = localTimeRe.matched(4);
+			if (frac != null) {
+				while (frac.length < 9) frac += "0";
+				if (frac.length > 9) frac = frac.substr(0, 9);
+				dt.nanosecond = Std.parseInt(frac);
+			}
+			return dt;
+		}
+
+		// Date only
+		var dateRe = ~/^(\d{4})-(\d{2})-(\d{2})$/;
+		if (dateRe.match(value)) {
+			dt.year = Std.parseInt(dateRe.matched(1));
+			dt.month = Std.parseInt(dateRe.matched(2));
+			dt.day = Std.parseInt(dateRe.matched(3));
+			return dt;
+		}
+
+		throw 'Invalid TOML datetime: $value';
 	}
 
 	private function parseValue():Dynamic {
@@ -267,13 +358,31 @@ final class Parser {
 			return Std.parseInt(StringTools.replace(previous().value, "_", ""));
 
 		if (match(TokenType.FLOAT))
-			return Std.parseFloat(StringTools.replace(previous().value, "_", ""));
+			return parseFloatValue(previous().value);
 
 		if (match(TokenType.BOOLEAN))
 			return previous().value == "true";
 
 		if (match(TokenType.DATETIME))
-			return dateTimeToDate(previous().value);
+			return parseDateTime(previous().value);
+
+		// IDENTIFIER in value position: try to interpret as typed value
+		if (match(TokenType.IDENTIFIER)) {
+			var v = previous().value;
+			if (v == "true") return true;
+			if (v == "false") return false;
+
+			if (isIntegerValue(v))
+				return Std.parseInt(StringTools.replace(v, "_", ""));
+
+			if (isFloatValue(v))
+				return parseFloatValue(v);
+
+			if (isDateTimeValue(v))
+				return parseDateTime(v);
+
+			throw error(previous(), 'Expected value');
+		}
 
 		if (match(TokenType.LBRACKET))
 			return parseArray();
@@ -282,6 +391,92 @@ final class Parser {
 			return parseInlineTable();
 
 		throw error(peek(), "Expected value");
+	}
+
+	private static function parseFloatValue(value:String):Float {
+		// Handle inf and nan
+		switch (value.toLowerCase()) {
+			case "inf", "+inf":
+				return Math.POSITIVE_INFINITY;
+			case "-inf":
+				return Math.NEGATIVE_INFINITY;
+			case "nan", "+nan", "-nan":
+				return Math.NaN;
+		}
+		return Std.parseFloat(StringTools.replace(value, "_", ""));
+	}
+
+	private static function isIntegerValue(value:String):Bool {
+		if (value == "+0" || value == "-0") return true;
+		if (~/^[+-]?(?:0|[1-9](?:_?[0-9])*)$/.match(value)) return true;
+		if (~/^0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*$/.match(value)) return true;
+		if (~/^0o[0-7](?:_?[0-7])*$/.match(value)) return true;
+		if (~/^0b[01](?:_?[01])*$/.match(value)) return true;
+		return false;
+	}
+
+	private static function isFloatValue(value:String):Bool {
+		if (~/^[+-]?(?:0|[1-9](?:_?[0-9])*)\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?$/.match(value)) return true;
+		if (~/^[+-]?(?:0|[1-9](?:_?[0-9])*)[eE][+-]?[0-9](?:_?[0-9])*$/.match(value)) return true;
+		if (~/^[+-]?(?:inf|nan)$/.match(value)) return true;
+		return false;
+	}
+
+	private static function isDateTimeValue(value:String):Bool {
+		var dateRe = ~/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
+		if (dateRe.match(value))
+			return isValidDate(Std.parseInt(dateRe.matched(1)), Std.parseInt(dateRe.matched(2)), Std.parseInt(dateRe.matched(3)));
+
+		var dtRe = ~/^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?(?:Z|[+-][0-9]{2}:[0-9]{2})?$/;
+		if (dtRe.match(value))
+			return isValidDateTime(
+				Std.parseInt(dtRe.matched(1)),
+				Std.parseInt(dtRe.matched(2)),
+				Std.parseInt(dtRe.matched(3)),
+				Std.parseInt(dtRe.matched(4)),
+				Std.parseInt(dtRe.matched(5)),
+				dtRe.matched(6) != null ? Std.parseInt(dtRe.matched(6)) : 0
+			);
+
+		var timeRe = ~/^([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?(?:Z|[+-][0-9]{2}:[0-9]{2})?$/;
+		if (timeRe.match(value))
+			return isValidTime(
+				Std.parseInt(timeRe.matched(1)),
+				Std.parseInt(timeRe.matched(2)),
+				timeRe.matched(3) != null ? Std.parseInt(timeRe.matched(3)) : 0
+			);
+
+		return false;
+	}
+
+	private static inline function isLeapYear(year:Int):Bool
+		return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+
+	private static function isValidDate(year:Int, month:Int, day:Int):Bool {
+		if (year < 1 || year > 9999 || month < 1 || month > 12 || day < 1)
+			return false;
+
+		var days = switch (month) {
+			case 1 | 3 | 5 | 7 | 8 | 10 | 12: 31;
+			case 4 | 6 | 9 | 11: 30;
+			case 2: isLeapYear(year) ? 29 : 28;
+			default: 0;
+		}
+
+		return day <= days;
+	}
+
+	private static function isValidDateTime(year:Int, month:Int, day:Int, hour:Int, minute:Int, second:Int):Bool {
+		return isValidDate(year, month, day)
+			&& hour >= 0 && hour <= 23
+			&& minute >= 0 && minute <= 59
+			&& second >= 0 && second <= 59;
+	}
+
+	private static function isValidTime(hour:Int, minute:Int, second:Int):Bool {
+		return hour >= 0 && hour <= 23
+			&& minute >= 0 && minute <= 59
+			&& second >= 0 && second <= 59;
 	}
 
 	private function parseArray():Array<Dynamic> {
@@ -309,32 +504,62 @@ final class Parser {
 
 	private function parseInlineTable():Dynamic {
 		var obj:Dynamic = {};
+		var sealedKeys:Map<String, Bool> = [];
+
+		skipNewlines();
 
 		while (!check(TokenType.RBRACE)) {
-			if (check(TokenType.NEWLINE))
-				throw error(peek(), "Newline in inline table");
+			// Parse dotted key in inline table
+			var keyParts:Array<String> = [];
+			var keyTokens:Array<Token> = [];
 
-			var key = consumeKey("Expected inline table key");
+			var first = consumeKey("Expected inline table key");
+			keyParts.push(first.value);
+			keyTokens.push(first);
 
-			if (Reflect.hasField(obj, key.value))
-				throw error(key, 'Duplicate key "${key.value}"');
+			while (match(TokenType.DOT)) {
+				var part = consumeKey("Expected key after '.'");
+				keyParts.push(part.value);
+				keyTokens.push(part);
+			}
 
 			consume(TokenType.EQUALS, "Expected '='");
 
 			var value = parseValue();
 
-			Reflect.setField(obj, key.value, value);
+			// Assign nested value
+			if (keyParts.length == 1) {
+				var key = keyParts[0];
+				if (Reflect.hasField(obj, key))
+					throw error(keyTokens[0], 'Duplicate key "$key"');
+				Reflect.setField(obj, key, value);
+				sealedKeys.set(key, true);
+			} else {
+				// Dotted key in inline table: create or verify intermediate tables
+				var current = obj;
+				for (i in 0...keyParts.length - 1) {
+					var part = keyParts[i];
+					if (sealedKeys.exists(part))
+						throw error(keyTokens[i], 'Cannot extend "$part" with dotted key');
+					if (!Reflect.hasField(current, part)) {
+						Reflect.setField(current, part, {});
+					}
+					current = Reflect.field(current, part);
+				}
+				var finalKey = keyParts[keyParts.length - 1];
+				if (Reflect.hasField(current, finalKey))
+					throw error(keyTokens[keyTokens.length - 1], 'Duplicate key "$finalKey"');
+				Reflect.setField(current, finalKey, value);
+			}
 
-			if (check(TokenType.NEWLINE))
-				throw error(peek(), "Newline in inline table");
+			skipNewlines();
 
 			if (match(TokenType.COMMA)) {
-				if (check(TokenType.RBRACE))
-					throw error(peek(), "Trailing comma in inline table");
-
+				skipNewlines();
 				continue;
 			}
 
+			skipNewlines();
 			break;
 		}
 
@@ -343,29 +568,18 @@ final class Parser {
 		return obj;
 	}
 
-	/**
-	 * Resolve one segment of a dotted path (table header or dotted key)
-	 * against `parent`, creating an intermediate table if it doesn't exist
-	 * yet. If the segment already resolves to an array of tables, descend
-	 * into that array's most recently defined element rather than the
-	 * array itself — this is what makes `[fruits.physical]` attach to the
-	 * last `[[fruits]]` entry, and likewise for nested `[[fruits.varieties]]`.
-	 * Throws a clean TomlError (instead of an opaque cast failure) if the
-	 * segment already holds a non-table value.
-	 */
-	private function descend(parent:Dynamic, part:String, token:Token, path:String):Dynamic {
+	private function descend(parent:Dynamic, part:String, token:Token, parts:Array<String>):Dynamic {
 		if (!Reflect.hasField(parent, part)) {
 			var table:Dynamic = {};
-
 			Reflect.setField(parent, part, table);
-
 			return table;
 		}
 
 		var value = Reflect.field(parent, part);
+		var pkey = pathKey(parts);
 
 		if (Std.isOfType(value, Array)) {
-			if (!arrayTables.exists(path))
+			if (!arrayTables.exists(pkey))
 				throw error(token, 'Cannot use "${part}" as a table: it is an array, not an array of tables');
 
 			var arr:Array<Dynamic> = cast value;
@@ -379,7 +593,7 @@ final class Parser {
 		if (!isTableLike(value))
 			throw error(token, 'Cannot redefine "${part}" as a table: it is already defined as a different type');
 
-		if (sealedTables.get(path) == "inline")
+		if (sealedTables.get(pkey) == "inline")
 			throw error(token, 'Cannot extend "${part}": it was defined by a dotted key or inline table');
 
 		return value;
@@ -408,7 +622,12 @@ final class Parser {
 	}
 
 	private function consumeKey(message:String):Token {
-		if (check(TokenType.IDENTIFIER) || check(TokenType.STRING))
+		if (check(TokenType.IDENTIFIER)
+			|| check(TokenType.STRING)
+			|| check(TokenType.INTEGER)
+			|| check(TokenType.FLOAT)
+			|| check(TokenType.BOOLEAN)
+			|| check(TokenType.DATETIME))
 			return advance();
 
 		throw error(peek(), message);
@@ -459,13 +678,21 @@ final class Parser {
 			throw error(peek(), message);
 	}
 
-	private function joinPath(basePath:String, parts:Array<String>):String {
-		var suffix = parts.join(".");
+	private static function pathKey(parts:Array<String>):String {
+		return parts.join("\x00");
+	}
 
+	private static function joinPath(basePath:String, subParts:Array<String>):String {
+		var suffix = subParts.join(".");
 		if (basePath == "")
 			return suffix;
-
 		return basePath + "." + suffix;
+	}
+
+	private static function splitPath(path:String):Array<String> {
+		if (path == "")
+			return [];
+		return path.split(".");
 	}
 
 	private function error(token:Token, message:String):TomlError {

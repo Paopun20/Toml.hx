@@ -36,18 +36,22 @@ class Main {
 				continue;
 
 			var ok = true;
+			var errMsg = "";
 
 			try {
 				Toml.parse(bytes.toString());
 
-				// invalid file parsed successfully
 				if (isInvalid)
 					ok = false;
-			} catch (_) {
-				// valid file failed parsing
-				if (isValid)
+			} catch (e:Any) {
+				if (isValid) {
 					ok = false;
+					errMsg = Std.string(e);
+				}
 			}
+
+			if (!ok && isValid)
+				trace('FAIL $entry -> $errMsg');
 
 			if (ok) {
 				pass.push(entry);
