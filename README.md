@@ -1,10 +1,17 @@
+<div align="center">
+
 # Toml.hx
 
-A Haxe implementation of the [TOML](https://toml.io/) configuration language.
+A Haxe implementation of the [TOML](https://toml.io/) (1.1.0)
+
+</div>
 
 ## Features
 
-- Cross-platform
+* Easy to use like JSON
+* 0 dependencies
+* lightweight
+* faster <sub>(if file is small, but slower if file is large)</sub>
 
 ## Installation
 

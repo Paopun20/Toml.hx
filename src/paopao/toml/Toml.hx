@@ -17,18 +17,18 @@ class Toml {
 	/**
 	 * Parse TOML file.
 	 */
-	public static function parseFile(path:String):Dynamic
-		return inline parse(File.getContent(path));
+	public static inline function parseFile(path:String):Dynamic
+		return parse(File.getContent(path));
 
 	/**
 	 * Convert object to TOML.
 	 */
-	public static function stringify(value:Dynamic):String
+	public static inline function stringify(value:Dynamic):String
 		return Writer.write(value);
 
 	/**
 	 * Save object as TOML.
 	 */
-	public static function save(path:String, value:Dynamic):Void
+	public static inline function save(path:String, value:Dynamic):Void
 		File.saveContent(path, stringify(value));
 }

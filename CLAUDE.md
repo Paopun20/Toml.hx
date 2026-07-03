@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Building and Running Tests
 
+- **Run Main.hx for speed test**: `haxe haxe.hxml`
 - **Run all tests**: `haxe test.hxml`
-- **Run Main.hx**: `haxe haxe.hxml`
-- **Build in cpp**: `haxe build.hxml`
+- **Build in cpp**: `haxe build-cpp.hxml`
 
 ## Project Architecture
 

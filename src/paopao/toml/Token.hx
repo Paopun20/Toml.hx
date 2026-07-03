@@ -8,10 +8,10 @@ final class Token {
 	 */
 	public final value:String;
 
-	public final line:Int;
-	public final column:Int;
+	public final line:UInt;
+	public final column:UInt;
 
-	public function new(type:TokenType, value:String, line:Int, column:Int) {
+	public function new(type:TokenType, value:String, line:UInt, column:UInt) {
 		this.type = type;
 		this.value = value;
 		this.line = line;

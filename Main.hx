@@ -1,6 +1,7 @@
 import sys.io.File;
 import paopao.toml.Toml;
 import haxe.Timer;
+import haxe.Log;
 
 class Memory {
 	public static function used():Float {
@@ -27,6 +28,11 @@ class Memory {
 
 class Main {
 	static function main() {
+		Log.trace = function(v, ?infos) {
+			Sys.stdout().writeString(v + "\n");
+			Sys.stdout().flush();
+		}
+
 		var text:String = File.getContent("Example-Tester.toml");
 
 		// Warm-up
@@ -52,7 +58,6 @@ class Main {
 		trace('Average Parse: ${((Timer.stamp() - start) / iterations) * 1000} ms');
 		trace('Average Parse Memory: ${(parseMemory / iterations) / 1024} KB');
 
-
 		// Stringify
 		start = Timer.stamp();
 		var stringifyMemory:Float = 0;
@@ -69,7 +74,6 @@ class Main {
 
 		trace('Average Stringify: ${((Timer.stamp() - start) / iterations) * 1000} ms');
 		trace('Average Stringify Memory: ${(stringifyMemory / iterations) / 1024} KB');
-
 
 		// Final memory
 		var memoryUsage = Memory.used();

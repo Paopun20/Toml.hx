@@ -1,3 +1,6 @@
 root.hxml
 --cpp bin/cpp
 -D HXCPP_CLANG
+-D HXCPP_RELEASE
+-D HXCPP_OPTIMIZATION
+-D TOML_INT64

@@ -3,7 +3,6 @@ package paopao.toml;
 import Reflect;
 import Type;
 import paopao.toml.TomlDateTime;
-
 using StringTools;
 
 @:analyzer(optimize, local_dce, fusion, user_var_fusion)
@@ -386,7 +385,7 @@ final class Parser {
 			return Std.parseInt((previous().value).replace("_", ""));
 
 		if (match(TokenType.FLOAT))
-			return parseFloatValue(previous().value);
+			return parseFloatValue((previous().value).replace("_", ""));
 
 		if (match(TokenType.BOOLEAN))
 			return previous().value == "true";
@@ -433,7 +432,7 @@ final class Parser {
 			case "nan", "+nan", "-nan":
 				return Math.NaN;
 		}
-		return Std.parseFloat(value.replace("_", ""));
+		return Std.parseFloat(value);
 	}
 
 	private static function isIntegerValue(value:String):Bool {
