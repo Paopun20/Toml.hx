@@ -5,12 +5,14 @@
   "tags": [
     "toml",
     "serialization",
-    "config"
+    "config",
+    "parser",
+    "writer"
   ],
   "description": "TOML parser/writer for Haxe",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "classPath": "src",
-  "releasenote": "Writer is support TomlDateTime",
+  "releasenote": "see CHANGELOG.md",
   "contributors": [
     "paopaodev"
   ]
