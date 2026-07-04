@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/HxToml.png" alt="Awesome Logo I Ever Make Yes" width="150">
+<img src="assets/HxToml.png" alt="Awesome Logo I Ever Make Yes" width="150">
 
 # Toml.hx
 
