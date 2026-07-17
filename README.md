@@ -124,9 +124,13 @@ ports = [8000, 8001, 8002]
 enabled = true
 ```
 
-### Validation Rules
+## Specification
 
-please read [official validation rules format](https://toml.io/en/v1.1.0)
+Toml.hx implements the TOML 1.1.0 specification.
+
+For the complete language reference, see the official TOML documentation:
+
+https://toml.io/en/v1.1.0
 
 ## License
 
