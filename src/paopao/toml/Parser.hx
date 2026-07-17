@@ -55,7 +55,7 @@ final class Parser {
 		while (!check(TokenType.RBRACKET)) {
 			var token = consumeKey("Expected table name");
 
-			parts.push(token.value);
+			parts.push(token.value.toString());
 			partTokens.push(token);
 
 			if (match(TokenType.DOT)) {
@@ -78,34 +78,40 @@ final class Parser {
 		if (parts.length == 0)
 			throw error(previous(), "Expected table name");
 
-		var current:Dynamic = root;
+		var path = parts.join(".");
 
-		for (i in 0...parts.length - 1)
-			current = descend(current, parts[i], partTokens[i], parts.slice(0, i + 1));
+		var pkey = "";
+		for (i in 0...parts.length)
+			pkey = i == 0 ? parts[i] : pkey + "\x00" + parts[i];
+
+		if (definedTables.exists(pkey))
+			throw error(partTokens[partTokens.length - 1], '"$path" is already defined as a table');
+
+		var current:Dynamic = root;
+		var accPath = "";
+		for (i in 0...parts.length - 1) {
+			accPath = i == 0 ? parts[i] : accPath + "\x00" + parts[i];
+			current = descend(current, parts[i], partTokens[i], accPath);
+		}
 
 		var finalName = parts[parts.length - 1];
 		var finalToken = partTokens[partTokens.length - 1];
-		var path = parts.join(".");
-
-		if (definedTables.exists(pathKey(parts)))
-			throw error(finalToken, '"$path" is already defined as a table');
 
 		var arr:Array<Dynamic>;
 
 		if (!Reflect.hasField(current, finalName)) {
 			arr = [];
-
 			Reflect.setField(current, finalName, arr);
 		} else {
 			var existing = Reflect.field(current, finalName);
 
-			if (!Std.isOfType(existing, Array) || !arrayTables.exists(pathKey(parts)))
+			if (!Std.isOfType(existing, Array) || !arrayTables.exists(pkey))
 				throw error(finalToken, 'Cannot define "$finalName" as an array of tables; it is already defined as a different type');
 
 			arr = cast existing;
 		}
 
-		arrayTables.set(pathKey(parts), true);
+		arrayTables.set(pkey, true);
 
 		var obj:Dynamic = {};
 
@@ -124,7 +130,7 @@ final class Parser {
 		while (!check(TokenType.RBRACKET)) {
 			var token = consumeKey("Expected table name");
 
-			parts.push(token.value);
+			parts.push(token.value.toString());
 			partTokens.push(token);
 
 			if (match(TokenType.DOT)) {
@@ -143,12 +149,16 @@ final class Parser {
 			throw error(previous(), "Expected table name");
 
 		var path = parts.join(".");
-		var pkey = pathKey(parts);
 
-		// Check if this exact path was already defined as a table.
-		// Skip the check if parent is an array table (sub-tables within
-		// array elements are scoped to that element).
-		var parentKey = parts.length > 1 ? pathKey(parts.slice(0, parts.length - 1)) : "";
+		var pkey = "";
+		for (i in 0...parts.length)
+			pkey = i == 0 ? parts[i] : pkey + "\x00" + parts[i];
+
+		var parentKey = "";
+		if (parts.length > 1) {
+			for (i in 0...parts.length - 1)
+				parentKey = i == 0 ? parts[i] : parentKey + "\x00" + parts[i];
+		}
 		var isInArrayTable = parentKey != "" && arrayTables.exists(parentKey);
 
 		if (!isInArrayTable && (definedTables.exists(pkey) || sealedTables.exists(pkey) || arrayTables.exists(pkey)))
@@ -158,9 +168,11 @@ final class Parser {
 			definedTables.set(pkey, true);
 
 		var current:Dynamic = root;
-
-		for (i in 0...parts.length)
-			current = descend(current, parts[i], partTokens[i], parts.slice(0, i + 1));
+		var accPath = "";
+		for (i in 0...parts.length) {
+			accPath = i == 0 ? parts[i] : accPath + "\x00" + parts[i];
+			current = descend(current, parts[i], partTokens[i], accPath);
+		}
 
 		skipNewlines();
 		currentTablePath = path;
@@ -174,13 +186,13 @@ final class Parser {
 
 		var first = consumeKey("Expected key");
 
-		keyParts.push(first.value);
+		keyParts.push(first.value.toString());
 		keyTokens.push(first);
 
 		while (match(TokenType.DOT)) {
 			var part = consumeKey("Expected key after '.'");
 
-			keyParts.push(part.value);
+			keyParts.push(part.value.toString());
 			keyTokens.push(part);
 		}
 
@@ -198,20 +210,21 @@ final class Parser {
 
 	private function assignDottedKey(root:Dynamic, parts:Array<String>, partTokens:Array<Token>, value:Dynamic, basePath:String):Void {
 		var current = root;
+		var accPath = basePath == "" ? "" : basePath.replace(".", "\x00");
+		var checkPath = basePath;
 
 		for (i in 0...parts.length - 1) {
-			var segParts = splitPath(basePath).concat(parts.slice(0, i + 1));
-			var segPkey = pathKey(segParts);
-			var checkPath = joinPath(basePath, parts.slice(0, i + 1));
+			checkPath = checkPath == "" ? parts[i] : checkPath + "." + parts[i];
+			accPath = accPath == "" ? parts[i] : accPath + "\x00" + parts[i];
 
-			if (definedTables.exists(segPkey))
+			if (definedTables.exists(accPath))
 				throw error(partTokens[i], 'Cannot append to explicitly defined table "$checkPath" with a dotted key');
 
-			if (arrayTables.exists(segPkey) && basePath != checkPath && !basePath.startsWith(checkPath + "."))
+			if (arrayTables.exists(accPath) && basePath != checkPath && !basePath.startsWith(checkPath + "."))
 				throw error(partTokens[i], 'Cannot append to array of tables "$checkPath" from "$basePath"');
 
-			current = descend(current, parts[i], partTokens[i], segParts);
-			sealedTables.set(segPkey, "dotted");
+			current = descend(current, parts[i], partTokens[i], accPath);
+			sealedTables.set(accPath, "dotted");
 		}
 
 		var finalKey = parts[parts.length - 1];
@@ -227,22 +240,17 @@ final class Parser {
 		Reflect.setField(current, finalKey, value);
 
 		if (isTableLike(value)) {
-			var allParts = splitPath(basePath).concat(parts);
-			sealedTables.set(pathKey(allParts), "inline");
+			accPath = accPath == "" ? finalKey : accPath + "\x00" + finalKey;
+			sealedTables.set(accPath, "inline");
 		}
 	}
 
-	// Datetime parsing patterns (capturing groups). Compiled once and
-	// reused across calls instead of being rebuilt on every parseDateTime
-	// invocation, which previously recompiled 4 regexes per datetime value.
 	private static final DT_FULL_RE = ~/^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:Z|([+-])(\d{2}):(\d{2}))?$/;
 	private static final DT_LOCAL_RE = ~/^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?([Zz])?$/;
 	private static final DT_TIME_RE = ~/^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:Z|([+-])(\d{2}):(\d{2}))?$/;
 	private static final DT_LOCAL_TIME_RE = ~/^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/;
 	private static final DT_DATE_ONLY_RE = ~/^(\d{4})-(\d{2})-(\d{2})$/;
 
-	// Value-classification patterns (validation only). Mirrors the
-	// equivalent static finals already hoisted in Lexer.hx.
 	private static final INT_RE = ~/^[+-]?(?:0|[1-9](?:_?[0-9])*)$/;
 	private static final HEX_INT_RE = ~/^0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*$/;
 	private static final OCT_INT_RE = ~/^0o[0-7](?:_?[0-7])*$/;
@@ -256,10 +264,11 @@ final class Parser {
 	private static final DATETIME_VALUE_RE = ~/^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?(?:Z|[+-][0-9]{2}:[0-9]{2})?$/;
 	private static final TIME_VALUE_RE = ~/^([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?(?:Z|[+-][0-9]{2}:[0-9]{2})?$/;
 
+	private static final NS_PAD = [1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000];
+
 	private static function parseDateTime(value:String):TomlDateTime {
 		var dt = new TomlDateTime();
 
-		// Full datetime with date and time
 		if (DT_FULL_RE.match(value)) {
 			dt.year = Std.parseInt(DT_FULL_RE.matched(1));
 			dt.month = Std.parseInt(DT_FULL_RE.matched(2));
@@ -272,11 +281,8 @@ final class Parser {
 
 			var frac = DT_FULL_RE.matched(7);
 			if (frac != null) {
-				while (frac.length < 9)
-					frac += "0";
-				if (frac.length > 9)
-					frac = frac.substr(0, 9);
-				dt.nanosecond = Std.parseInt(frac);
+				var flen = frac.length;
+				dt.nanosecond = flen <= 9 ? Std.parseInt(frac) * NS_PAD[9 - flen] : Std.parseInt(frac.substr(0, 9));
 			}
 
 			if (DT_FULL_RE.matched(8) != null) {
@@ -292,7 +298,6 @@ final class Parser {
 			return dt;
 		}
 
-		// Local datetime (same as full but with lowercase z or without timezone)
 		if (DT_LOCAL_RE.match(value)) {
 			dt.year = Std.parseInt(DT_LOCAL_RE.matched(1));
 			dt.month = Std.parseInt(DT_LOCAL_RE.matched(2));
@@ -305,11 +310,8 @@ final class Parser {
 
 			var frac = DT_LOCAL_RE.matched(7);
 			if (frac != null) {
-				while (frac.length < 9)
-					frac += "0";
-				if (frac.length > 9)
-					frac = frac.substr(0, 9);
-				dt.nanosecond = Std.parseInt(frac);
+				var flen = frac.length;
+				dt.nanosecond = flen <= 9 ? Std.parseInt(frac) * NS_PAD[9 - flen] : Std.parseInt(frac.substr(0, 9));
 			}
 
 			if (DT_LOCAL_RE.matched(8) != null)
@@ -318,7 +320,6 @@ final class Parser {
 			return dt;
 		}
 
-		// Time only with optional timezone
 		if (DT_TIME_RE.match(value)) {
 			dt.hour = Std.parseInt(DT_TIME_RE.matched(1));
 			dt.minute = Std.parseInt(DT_TIME_RE.matched(2));
@@ -328,11 +329,8 @@ final class Parser {
 
 			var frac = DT_TIME_RE.matched(4);
 			if (frac != null) {
-				while (frac.length < 9)
-					frac += "0";
-				if (frac.length > 9)
-					frac = frac.substr(0, 9);
-				dt.nanosecond = Std.parseInt(frac);
+				var flen = frac.length;
+				dt.nanosecond = flen <= 9 ? Std.parseInt(frac) * NS_PAD[9 - flen] : Std.parseInt(frac.substr(0, 9));
 			}
 
 			if (DT_TIME_RE.matched(5) != null) {
@@ -344,7 +342,6 @@ final class Parser {
 			return dt;
 		}
 
-		// Local time only (without timezone)
 		if (DT_LOCAL_TIME_RE.match(value)) {
 			dt.hour = Std.parseInt(DT_LOCAL_TIME_RE.matched(1));
 			dt.minute = Std.parseInt(DT_LOCAL_TIME_RE.matched(2));
@@ -354,16 +351,12 @@ final class Parser {
 
 			var frac = DT_LOCAL_TIME_RE.matched(4);
 			if (frac != null) {
-				while (frac.length < 9)
-					frac += "0";
-				if (frac.length > 9)
-					frac = frac.substr(0, 9);
-				dt.nanosecond = Std.parseInt(frac);
+				var flen = frac.length;
+				dt.nanosecond = flen <= 9 ? Std.parseInt(frac) * NS_PAD[9 - flen] : Std.parseInt(frac.substr(0, 9));
 			}
 			return dt;
 		}
 
-		// Date only
 		if (DT_DATE_ONLY_RE.match(value)) {
 			dt.year = Std.parseInt(DT_DATE_ONLY_RE.matched(1));
 			dt.month = Std.parseInt(DT_DATE_ONLY_RE.matched(2));
@@ -382,20 +375,19 @@ final class Parser {
 			return previous().value;
 
 		if (match(TokenType.INTEGER))
-			return Std.parseInt((previous().value).replace("_", ""));
+			return Std.parseInt((previous().value.toString()).replace("_", ""));
 
 		if (match(TokenType.FLOAT))
-			return parseFloatValue((previous().value).replace("_", ""));
+			return parseFloatValue((previous().value.toString()).replace("_", ""));
 
 		if (match(TokenType.BOOLEAN))
-			return previous().value == "true";
+			return previous().value.toString() == "true";
 
 		if (match(TokenType.DATETIME))
-			return parseDateTime(previous().value);
+			return parseDateTime(previous().value.toString());
 
-		// IDENTIFIER in value position: try to interpret as typed value
 		if (match(TokenType.IDENTIFIER)) {
-			var v = previous().value;
+			var v = previous().value.toString();
 			if (v == "true")
 				return true;
 			if (v == "false")
@@ -423,8 +415,8 @@ final class Parser {
 	}
 
 	private static function parseFloatValue(value:String):Float {
-		// Handle inf and nan
-		switch (value.toLowerCase()) {
+		// FIXED: removed .toLowerCase() — inf/nan are lowercase-only in TOML
+		switch (value) {
 			case "inf", "+inf":
 				return Math.POSITIVE_INFINITY;
 			case "-inf":
@@ -436,30 +428,105 @@ final class Parser {
 	}
 
 	private static function isIntegerValue(value:String):Bool {
-		if (value == "+0" || value == "-0")
-			return true;
-		if (INT_RE.match(value))
-			return true;
-		if (HEX_INT_RE.match(value))
-			return true;
-		if (OCT_INT_RE.match(value))
-			return true;
-		if (BIN_INT_RE.match(value))
-			return true;
-		return false;
+		var len = value.length;
+		if (len == 0)
+			return false;
+
+		if (len == 2) {
+			var c0 = value.charCodeAt(0);
+			if ((c0 == 43 || c0 == 45) && value.charCodeAt(1) == 48)
+				return true;
+		}
+
+		var i = 0;
+		var c = value.charCodeAt(0);
+		if (c == 43 || c == 45) {
+			if (len == 1)
+				return false;
+			i = 1;
+			c = value.charCodeAt(1);
+		}
+
+		if (c == 48) {
+			if (len == i + 1)
+				return true;
+			var next = value.charCodeAt(i + 1);
+			if (next == 120)
+				return HEX_INT_RE.match(value);
+			if (next == 111)
+				return OCT_INT_RE.match(value);
+			if (next == 98)
+				return BIN_INT_RE.match(value);
+			return false;
+		}
+
+		if (c < 49 || c > 57)
+			return false;
+
+		for (j in i + 1...len) {
+			var ch = value.charCodeAt(j);
+			if (ch == 95) {
+				if (j + 1 >= len)
+					return false;
+				var nxt = value.charCodeAt(j + 1);
+				if (nxt < 48 || nxt > 57)
+					return false;
+			} else if (ch < 48 || ch > 57) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private static function isFloatValue(value:String):Bool {
-		if (FLOAT_RE.match(value))
-			return true;
-		if (EXPONENT_RE.match(value))
-			return true;
-		if (INF_NAN_RE.match(value))
-			return true;
-		return false;
+		var len = value.length;
+		if (len < 3)
+			return false;
+
+		var start = 0;
+		var c0 = value.charCodeAt(0);
+		if (c0 == 43 || c0 == 45) {
+			if (len == 3)
+				return false;
+			start = 1;
+		}
+
+		if (len - start == 3) {
+			var s = value.substr(start, 3);
+			if (s == "inf" || s == "nan")
+				return true;
+		}
+
+		var mightBeFloat = false;
+		for (i in start...len) {
+			var c = value.charCodeAt(i);
+			if (c == 46 || c == 101 || c == 69) {
+				mightBeFloat = true;
+				break;
+			}
+		}
+		if (!mightBeFloat)
+			return false;
+
+		return FLOAT_RE.match(value) || EXPONENT_RE.match(value) || INF_NAN_RE.match(value);
 	}
 
 	private static function isDateTimeValue(value:String):Bool {
+		var len = value.length;
+		if (len < 5)
+			return false;
+
+		var hasDtChar = false;
+		for (i in 0...len) {
+			var c = value.charCodeAt(i);
+			if (c == 45 || c == 58 || c == 84 || c == 116 || c == 32) {
+				hasDtChar = true;
+				break;
+			}
+		}
+		if (!hasDtChar)
+			return false;
+
 		if (DATE_ONLY_RE.match(value))
 			return isValidDate(Std.parseInt(DATE_ONLY_RE.matched(1)), Std.parseInt(DATE_ONLY_RE.matched(2)), Std.parseInt(DATE_ONLY_RE.matched(3)));
 
@@ -530,17 +597,16 @@ final class Parser {
 		skipNewlines();
 
 		while (!check(TokenType.RBRACE)) {
-			// Parse dotted key in inline table
 			var keyParts:Array<String> = [];
 			var keyTokens:Array<Token> = [];
 
 			var first = consumeKey("Expected inline table key");
-			keyParts.push(first.value);
+			keyParts.push(first.value.toString());
 			keyTokens.push(first);
 
 			while (match(TokenType.DOT)) {
 				var part = consumeKey("Expected key after '.'");
-				keyParts.push(part.value);
+				keyParts.push(part.value.toString());
 				keyTokens.push(part);
 			}
 
@@ -548,7 +614,6 @@ final class Parser {
 
 			var value = parseValue();
 
-			// Assign nested value
 			if (keyParts.length == 1) {
 				var key = keyParts[0];
 				if (Reflect.hasField(obj, key))
@@ -556,15 +621,13 @@ final class Parser {
 				Reflect.setField(obj, key, value);
 				sealedKeys.set(key, true);
 			} else {
-				// Dotted key in inline table: create or verify intermediate tables
 				var current = obj;
 				for (i in 0...keyParts.length - 1) {
 					var part = keyParts[i];
 					if (sealedKeys.exists(part))
 						throw error(keyTokens[i], 'Cannot extend "$part" with dotted key');
-					if (!Reflect.hasField(current, part)) {
+					if (!Reflect.hasField(current, part))
 						Reflect.setField(current, part, {});
-					}
 					current = Reflect.field(current, part);
 				}
 				var finalKey = keyParts[keyParts.length - 1];
@@ -589,7 +652,7 @@ final class Parser {
 		return obj;
 	}
 
-	private function descend(parent:Dynamic, part:String, token:Token, parts:Array<String>):Dynamic {
+	private function descend(parent:Dynamic, part:String, token:Token, pkey:String):Dynamic {
 		if (!Reflect.hasField(parent, part)) {
 			var table:Dynamic = {};
 			Reflect.setField(parent, part, table);
@@ -597,7 +660,6 @@ final class Parser {
 		}
 
 		var value = Reflect.field(parent, part);
-		var pkey = pathKey(parts);
 
 		if (Std.isOfType(value, Array)) {
 			if (!arrayTables.exists(pkey))
@@ -620,26 +682,8 @@ final class Parser {
 		return value;
 	}
 
-	private function isTableLike(value:Dynamic):Bool {
-		if (value == null)
-			return false;
-
-		if (Std.isOfType(value, String))
-			return false;
-
-		if (Std.isOfType(value, Bool))
-			return false;
-
-		if (Std.isOfType(value, Int))
-			return false;
-
-		if (Std.isOfType(value, Float))
-			return false;
-
-		if (Std.isOfType(value, Array))
-			return false;
-
-		return Type.typeof(value) == TObject;
+	private inline function isTableLike(value:Dynamic):Bool {
+		return value != null && Type.typeof(value) == TObject;
 	}
 
 	private function consumeKey(message:String):Token {

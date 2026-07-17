@@ -1,5 +1,7 @@
 import sys.io.File;
-import paopao.toml.Toml;
+import paopao.toml.Parser;
+import paopao.toml.Lexer;
+import paopao.toml.Writer;
 import haxe.Timer;
 import haxe.Log;
 
@@ -35,52 +37,19 @@ class Main {
 
 		var text:String = File.getContent("Example-Tester.toml");
 
-		// Warm-up
-		var data:Dynamic = Toml.parse(text);
-		Toml.stringify(data);
-
-		var iterations = 1000;
-
-		// Parse
 		var start = Timer.stamp();
-		var parseMemory:Float = 0;
+		var lexer = new Lexer(text).tokenize();
+		var end = Timer.stamp();
+		trace("Lexer: " + ((end - start) * 1000000) + "us");
 
-		for (i in 0...iterations) {
-			Toml.parse(text);
-
-			var mem = Memory.used();
-			if (mem >= 0)
-				parseMemory += mem;
-
-			Memory.freeup();
-		}
-
-		trace('Average Parse: ${((Timer.stamp() - start) / iterations) * 1000} ms');
-		trace('Average Parse Memory: ${(parseMemory / iterations) / 1024} KB');
-
-		// Stringify
 		start = Timer.stamp();
-		var stringifyMemory:Float = 0;
+		var parser = new Parser(lexer).parse();
+		end = Timer.stamp();
+		trace("Parser: " + ((end - start) * 1000000) + "us");
 
-		for (i in 0...iterations) {
-			Toml.stringify(data);
-
-			var mem = Memory.used();
-			if (mem >= 0)
-				stringifyMemory += mem;
-
-			Memory.freeup();
-		}
-
-		trace('Average Stringify: ${((Timer.stamp() - start) / iterations) * 1000} ms');
-		trace('Average Stringify Memory: ${(stringifyMemory / iterations) / 1024} KB');
-
-		// Final memory
-		var memoryUsage = Memory.used();
-
-		if (memoryUsage < 0)
-			trace('Memory Usage: Not available on this platform');
-		else
-			trace('Current Memory Usage: ${memoryUsage / 1024} KB');
+		start = Timer.stamp();
+		var data = Writer.write(parser);
+		end = Timer.stamp();
+		trace("Writer: " + ((end - start) * 1000000) + "us");
 	}
 }

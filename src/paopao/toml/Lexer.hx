@@ -6,8 +6,8 @@ final class Lexer {
 	private final length:Int;
 
 	private var pos:Int = 0;
-	private var line:Int = 1;
-	private var column:Int = 1;
+	private var line:UInt = 1;
+	private var column:UInt = 1;
 
 	public function new(source:String) {
 		this.source = source;
@@ -20,68 +20,67 @@ final class Lexer {
 		skipBOM();
 
 		while (!isAtEnd()) {
-			var c = peek();
+			var code = source.charCodeAt(pos);
 
-			switch (c) {
-				case " " | "\t":
+			switch (code) {
+				case 0x20 | 0x09: // " " | "\t"
 					advance();
 
-				case "\r":
+				case 0x0D: // "\r"
 					if (peekNext() != "\n")
 						throw error("Bare carriage return");
-
-					tokens.push(new Token(TokenType.NEWLINE, "\\n", line, column));
+					tokens.push(makeToken(TokenType.NEWLINE, "\\n"));
 					advance();
 					advance();
 
-				case "\n":
-					tokens.push(new Token(TokenType.NEWLINE, "\\n", line, column));
+				case 0x0A: // "\n"
+					tokens.push(makeToken(TokenType.NEWLINE, "\\n"));
 					advance();
 
-				case "#":
+				case 0x23: // "#"
 					skipComment();
 
-				case "=":
+				case 0x3D: // "="
 					tokens.push(makeToken(TokenType.EQUALS, "="));
 					advance();
 
-				case ".":
+				case 0x2E: // "."
 					tokens.push(makeToken(TokenType.DOT, "."));
 					advance();
 
-				case ",":
+				case 0x2C: // ","
 					tokens.push(makeToken(TokenType.COMMA, ","));
 					advance();
 
-				case "[":
+				case 0x5B: // "["
 					tokens.push(makeToken(TokenType.LBRACKET, "["));
 					advance();
 
-				case "]":
+				case 0x5D: // "]"
 					tokens.push(makeToken(TokenType.RBRACKET, "]"));
 					advance();
 
-				case "{":
+				case 0x7B: // "{"
 					tokens.push(makeToken(TokenType.LBRACE, "{"));
 					advance();
 
-				case "}":
+				case 0x7D: // "}"
 					tokens.push(makeToken(TokenType.RBRACE, "}"));
 					advance();
 
-				case "\"", "'":
+				case 0x22 | 0x27: // "\"" | "'"
 					tokens.push(readString());
 
 				default:
-					if (!isAtEnd() && isIdentifierStartCode(source.charCodeAt(pos))) {
+					if (!isAtEnd() && isIdentifierStartCode(code)) {
 						for (token in readIdentifierOrValue())
 							tokens.push(token);
 					} else
-						throw error('Unexpected character "$c"');
+						throw error('Unexpected character "${String.fromCharCode(code)}"');
 			}
 		}
 
-		tokens.push(new Token(TokenType.EOF, "", line, column));
+		tokens.push(makeToken(TokenType.EOF, ""));
 
 		return tokens;
 	}
@@ -107,83 +106,89 @@ final class Lexer {
 	private inline function peek():String {
 		if (isAtEnd())
 			return "\x00";
-
 		return source.charAt(pos);
 	}
 
 	private inline function peekNext():String {
 		if (pos + 1 >= this.length)
 			return "\x00";
-
 		return source.charAt(pos + 1);
 	}
 
 	private function advance():String {
 		var c = source.charAt(pos);
-
 		pos++;
-
 		if (c == "\n") {
 			line++;
 			column = 1;
 		} else
 			column++;
-
 		return c;
 	}
 
-	private inline function makeToken(type:TokenType, value:String):Token
-		return new Token(type, value, line, column);
+	private inline function makeToken(type:TokenType, value:String):Token {
+		final buf = (new StringBuf());
+		buf.add(value);
+		return {
+			type: type,
+			value: buf,
+			line: line,
+			column: column
+		};
+	}
+
+	private inline function makeTokenAt(type:TokenType, value:String, line:UInt, column:UInt):Token {
+		final buf = (new StringBuf());
+		buf.add(value);
+		return {
+			type: type,
+			value: buf,
+			line: line,
+			column: column
+		};
+	}
 
 	private inline function error(message:String):TomlError
 		return new TomlError(message, line, column);
 
 	private function skipComment():Void {
 		while (!isAtEnd()) {
-			var c = peek();
-
-			if (c == "\n" || (c == "\r" && peekNext() == "\n"))
-				break;
-
 			var code = source.charCodeAt(pos);
-
+			if (code == 0x0A || (code == 0x0D && peekNext() == "\n"))
+				break;
 			if (!isUnicodeScalarValue(code))
 				throw error("Invalid unicode scalar");
-
 			if (isDisallowedControlCode(code))
 				throw error("Control character in comment");
-
 			advance();
 		}
 	}
 
 	private function readUnicodeEscape(length:Int):String {
-		var hex = "";
-
+		var codepoint = 0;
 		for (i in 0...length) {
 			if (isAtEnd())
 				throw new TomlError("Unexpected end of unicode escape", line, column);
-
 			var c = advance();
-
-			if (!~/^[0-9A-Fa-f]$/.match(c))
+			var code = c.charCodeAt(0);
+			var digit:Int;
+			if (code >= 48 && code <= 57)
+				digit = code - 48;
+			else if (code >= 65 && code <= 70)
+				digit = code - 55;
+			else if (code >= 97 && code <= 102)
+				digit = code - 87;
+			else
 				throw new TomlError('Invalid hex digit "$c"', line, column);
-
-			hex += c;
+			codepoint = (codepoint << 4) | digit;
 		}
-
-		var codepoint = Std.parseInt("0x" + hex);
-
 		if (!isUnicodeScalarValue(codepoint))
-			throw new TomlError('Invalid unicode scalar U+$hex', line, column);
-
+			throw new TomlError('Invalid unicode scalar U+${StringTools.hex(codepoint, length)}', line, column);
 		if (codepoint <= 0xFFFF)
 			return String.fromCharCode(codepoint);
-
 		var value = codepoint - 0x10000;
 		var high = 0xD800 + (value >> 10);
 		var low = 0xDC00 + (value & 0x3FF);
-
 		return String.fromCharCode(high) + String.fromCharCode(low);
 	}
 
@@ -197,20 +202,21 @@ final class Lexer {
 		var quote = peek();
 		var startLine = line;
 		var startColumn = column;
+		var quoteCode = source.charCodeAt(pos);
 
 		advance(); // opening quote
 
 		var multiline = false;
-		var literal = quote == "'";
+		var literal = quoteCode == 0x27; // '\''
 
 		// """ or '''
-		if (peek() == quote && peekNext() == quote) {
+		if (peekCode() == quoteCode && peekNextCode() == quoteCode) {
 			multiline = true;
 			advance();
 			advance();
 
 			// Ignore one immediate newline after opening delimiter.
-			if (peek() == "\n")
+			if (peekCode() == 0x0A)
 				advance();
 		}
 
@@ -218,11 +224,12 @@ final class Lexer {
 
 		while (!isAtEnd()) {
 			var c = advance();
+			var ccode = source.charCodeAt(pos - 1);
 
 			// Closing delimiter for multiline strings
-			if (multiline && c == quote) {
+			if (multiline && ccode == quoteCode) {
 				var qCount = 1;
-				while (!isAtEnd() && peek() == quote) {
+				while (!isAtEnd() && peekCode() == quoteCode) {
 					advance();
 					qCount++;
 				}
@@ -230,65 +237,57 @@ final class Lexer {
 					var extra = qCount - 3;
 					if (extra <= 2) {
 						for (i in 0...extra)
-							buf.add(quote);
-						return new Token(TokenType.MULTILINE_STRING, buf.toString(), startLine, startColumn);
+							buf.addChar(quoteCode);
+						return makeTokenAt(TokenType.MULTILINE_STRING, buf.toString(), startLine, startColumn);
 					}
 				}
 				// Not a close: all quotes are content
 				for (i in 0...qCount)
-					buf.add(quote);
+					buf.addChar(quoteCode);
 				continue;
 			}
 
 			// Single-line string closing
-			if (!multiline && c == quote)
-				return new Token(TokenType.STRING, buf.toString(), startLine, startColumn);
+			if (!multiline && ccode == quoteCode)
+				return makeTokenAt(TokenType.STRING, buf.toString(), startLine, startColumn);
 
-			if (!multiline && c == "\n")
+			if (!multiline && ccode == 0x0A)
 				throw new TomlError("Newline in string", line, column);
 
 			// Literal strings have no escaping.
 			if (literal) {
-				if (c == "\r" && multiline && peek() == "\n") {
+				if (ccode == 0x0D && multiline && peekCode() == 0x0A) {
 					advance();
-					buf.add("\n");
+					buf.addChar(0x0A);
 					continue;
 				}
-
-				var code = source.charCodeAt(pos - 1);
-
-				if (!isUnicodeScalarValue(code))
+				if (!isUnicodeScalarValue(ccode))
 					throw new TomlError("Invalid unicode scalar", line, column);
-
-				if (isDisallowedControlCode(code) && !(multiline && c == "\n"))
+				if (isDisallowedControlCode(ccode) && !(multiline && ccode == 0x0A))
 					throw new TomlError("Control character in string", line, column);
-
 				buf.add(c);
 				continue;
 			}
 
 			// Escape sequences
-			if (c == "\\") {
+			if (ccode == 0x5C) { // '\\'
 				if (isAtEnd())
 					throw new TomlError("Unexpected end of string", line, column);
 
-				// Multiline string line continuation:
-				// backslash followed only by whitespace before a newline
-				// strips all whitespace (including newlines) up to the
-				// next non-whitespace character.
+				// Multiline string line continuation
 				if (multiline) {
 					var savedPos = pos;
 					var savedLine = line;
 					var savedColumn = column;
-					while (!isAtEnd() && (peek() == " " || peek() == "\t"))
+					while (!isAtEnd() && (peekCode() == 0x20 || peekCode() == 0x09))
 						advance();
-					if (!isAtEnd() && (peek() == "\n" || peek() == "\r")) {
-						if (peek() == "\r" && peekNext() == "\n")
+					if (!isAtEnd() && (peekCode() == 0x0A || peekCode() == 0x0D)) {
+						if (peekCode() == 0x0D && peekNext() == "\n")
 							advance();
 						advance();
 						while (!isAtEnd()) {
-							var p = peek();
-							if (p == " " || p == "\t" || p == "\n" || p == "\r")
+							var p = peekCode();
+							if (p == 0x20 || p == 0x09 || p == 0x0A || p == 0x0D)
 								advance();
 							else
 								break;
@@ -301,60 +300,47 @@ final class Lexer {
 				}
 
 				var escaped = advance();
+				var ecode = source.charCodeAt(pos - 1);
 
-				switch (escaped) {
-					case "b":
+				switch (ecode) {
+					case 0x62: // 'b'
 						buf.addChar(0x08);
-
-					case "t":
+					case 0x74: // 't'
 						buf.addChar(0x09);
-
-					case "n":
+					case 0x6E: // 'n'
 						buf.addChar(0x0A);
-
-					case "f":
+					case 0x66: // 'f'
 						buf.addChar(0x0C);
-
-					case "r":
+					case 0x72: // 'r'
 						buf.addChar(0x0D);
-
-					case "e":
+					case 0x65: // 'e'
 						buf.addChar(0x1B);
-
-					case "\"":
-						buf.add("\"");
-
-					case "\\":
-						buf.add("\\");
-
-					case "x":
+					case 0x22: // '"'
+						buf.addChar(0x22);
+					case 0x5C: // '\\'
+						buf.addChar(0x5C);
+					case 0x78: // 'x'
 						buf.add(readUnicodeEscape(2));
-
-					case "u":
+					case 0x75: // 'u'
 						buf.add(readUnicodeEscape(4));
-
-					case "U":
+					case 0x55: // 'U'
 						buf.add(readUnicodeEscape(8));
-
 					default:
 						throw new TomlError('Invalid escape sequence \\$escaped', line, column);
 				}
-
 				continue;
 			}
 
-			if (c == "\r" && multiline && peek() == "\n") {
+			if (ccode == 0x0D && multiline && peekCode() == 0x0A) {
 				advance();
-				buf.add("\n");
+				buf.addChar(0x0A);
 				continue;
 			}
 
-			var code = source.charCodeAt(pos - 1);
-
-			if (!isUnicodeScalarValue(code))
+			if (!isUnicodeScalarValue(ccode))
 				throw new TomlError("Invalid unicode scalar", line, column);
 
-			if (isDisallowedControlCode(code) && !(multiline && c == "\n"))
+			if (isDisallowedControlCode(ccode) && !(multiline && ccode == 0x0A))
 				throw new TomlError("Control character in string", line, column);
 
 			buf.add(c);
@@ -363,37 +349,29 @@ final class Lexer {
 		throw new TomlError("Unterminated string", startLine, startColumn);
 	}
 
-	// Integer: decimal with optional underscores, +0, -0
+	private inline function peekCode():Int {
+		if (pos >= this.length)
+			return 0;
+		return source.charCodeAt(pos);
+	}
+
+	private inline function peekNextCode():Int {
+		if (pos + 1 >= this.length)
+			return 0;
+		return source.charCodeAt(pos + 1);
+	}
+
 	private static final INT_RE = ~/^[+-]?(?:0|[1-9](?:_?[0-9])*)$/;
-
-	// Float with decimal point (optional exponent)
 	private static final FLOAT_RE = ~/^[+-]?(?:0|[1-9](?:_?[0-9])*)\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?$/;
-
-	// Float without decimal point (exponent only, e.g. 3e2, 3e+2)
 	private static final EXPONENT_RE = ~/^[+-]?(?:0|[1-9](?:_?[0-9])*)[eE][+-]?[0-9](?:_?[0-9])*$/;
-
-	// Special float values: inf, nan, with optional sign
 	private static final INF_NAN_RE = ~/^[+-]?(?:inf|nan)$/;
-
-	// Integer: hex, octal, binary (lowercase prefix only per TOML spec)
 	private static final HEX_INT_RE = ~/^0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*$/;
 	private static final OCT_INT_RE = ~/^0o[0-7](?:_?[0-7])*$/;
 	private static final BIN_INT_RE = ~/^0b[01](?:_?[01])*$/;
-
-	// Full date: YYYY-MM-DD
 	private static final DATE_RE = ~/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
-
-	// Full datetime with timezone (Z/z or offset), T/t or space separator,
-	// seconds optional, fraction optional.
 	private static final DATETIME_RE = ~/^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})?$/;
-
-	// Local datetime without timezone, seconds optional
 	private static final LOCAL_DATETIME_RE = ~/^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?$/;
-
-	// Local time: HH:MM:SS, HH:MM, with optional fraction
 	private static final LOCAL_TIME_RE = ~/^([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?$/;
-
-	// Time with optional timezone
 	private static final TIME_RE = ~/^([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})?$/;
 
 	private function readIdentifierOrValue():Array<Token> {
@@ -401,20 +379,24 @@ final class Lexer {
 		var startColumn = column;
 
 		var buf = new StringBuf();
+		var hasDot = false;
 
 		while (!isAtEnd()) {
 			var c = peek();
+			var code = source.charCodeAt(pos);
 
 			switch (c) {
 				case "\t" | "\r" | "\n":
 					break;
 
 				case " ":
-					// Allow space in datetime values: YYYY-MM-DD HH:MM:SS
-					if (looksLikeDatePrefix(buf.toString()) && !isAtEnd() && peekNext() >= "0" && peekNext() <= "9") {
-						buf.add(c);
-						advance();
-						continue;
+					if (looksLikeDatePrefix(buf.toString()) && !isAtEnd()) {
+						var nextCode = source.charCodeAt(pos + 1);
+						if (nextCode >= 48 && nextCode <= 57) {
+							buf.add(c);
+							advance();
+							continue;
+						}
 					}
 					break;
 
@@ -422,11 +404,10 @@ final class Lexer {
 					break;
 
 				case ".":
-					// If next char is a quote, or not a valid bare key char,
-					// emit the dot as a separate DOT token
 					var next = peekNext();
 					if (next == "\"" || next == "'" || !isBareKeyChar(next.charCodeAt(0)))
 						break;
+					hasDot = true;
 					buf.add(c);
 					advance();
 
@@ -440,88 +421,175 @@ final class Lexer {
 		}
 
 		var value = buf.toString();
+		var len = value.length;
 
-		if (value == "" || value == "+")
+		if (len == 0 || value == "+")
 			throw new TomlError('Invalid bare key "$value"', startLine, startColumn);
 
-		// Values with dots could be floats, datetimes, or dotted bare keys.
-		// Check typed patterns first so that e.g. 3.14 is recognized as
-		// FLOAT rather than split into IDENTIFIER(3), DOT, IDENTIFIER(14).
-		if (value.indexOf(".") >= 0 && (isFloat(value) || isDateTime(value))) {
-			if (isDateTime(value))
-				return [new Token(TokenType.DATETIME, value, startLine, startColumn)];
-
+		// Fast path: values with dots could be floats, datetimes, or dotted bare keys.
+		if (hasDot) {
 			if (isFloat(value))
-				return [new Token(TokenType.FLOAT, value, startLine, startColumn)];
-		}
+				return [makeTokenAt(TokenType.FLOAT, value, startLine, startColumn)];
+			if (isDateTime(value))
+				return [makeTokenAt(TokenType.DATETIME, value, startLine, startColumn)];
 
-		// Dotted bare key (e.g. a.b): split into parts
-		if (value.indexOf(".") >= 0) {
-			var parts = value.split(".");
+			// Dotted bare key (e.g. a.b): split into parts without allocating an array from String.split
+			var result:Array<Token> = [];
+			var partStart = 0;
 			var allValid = true;
-			for (i in 0...parts.length) {
-				if (!isValidBareKey(parts[i])) {
-					allValid = false;
-					break;
+			for (i in 0...len) {
+				if (value.charCodeAt(i) == 46) { // '.'
+					var part = value.substring(partStart, i);
+					if (!isValidBareKey(part)) {
+						allValid = false;
+						break;
+					}
+					result.push(makeTokenAt(TokenType.IDENTIFIER, part, startLine, startColumn));
+					result.push(makeTokenAt(TokenType.DOT, ".", startLine, startColumn));
+					partStart = i + 1;
 				}
 			}
 			if (allValid) {
-				var result:Array<Token> = [];
-				for (i in 0...parts.length) {
-					result.push(new Token(TokenType.IDENTIFIER, parts[i], startLine, startColumn));
-					if (i < parts.length - 1)
-						result.push(new Token(TokenType.DOT, ".", startLine, startColumn));
+				var lastPart = value.substring(partStart, len);
+				if (isValidBareKey(lastPart)) {
+					result.push(makeTokenAt(TokenType.IDENTIFIER, lastPart, startLine, startColumn));
+					return result;
 				}
-				return result;
 			}
 			// Not a valid dotted bare key — fall through to typed value check
 		}
 
 		// Check for special float-like values that are NOT valid bare keys
-		// (inf, nan, exponent-only floats like 3e+2). These must be
-		// recognized here since they won't parse as bare keys.
 		if (!isValidBareKey(value)) {
 			if (isDateTime(value))
-				return [new Token(TokenType.DATETIME, value, startLine, startColumn)];
-
+				return [makeTokenAt(TokenType.DATETIME, value, startLine, startColumn)];
 			if (isFloat(value))
-				return [new Token(TokenType.FLOAT, value, startLine, startColumn)];
-
+				return [makeTokenAt(TokenType.FLOAT, value, startLine, startColumn)];
 			if (isInteger(value))
-				return [new Token(TokenType.INTEGER, value, startLine, startColumn)];
-
+				return [makeTokenAt(TokenType.INTEGER, value, startLine, startColumn)];
 			throw new TomlError('Invalid bare key "$value"', startLine, startColumn);
 		}
 
-		// The value IS a valid bare key, but might also be a typed literal.
-		// In TOML, bare keys that look like integers, floats, booleans, or
-		// dates are still keys, not values. We produce an IDENTIFIER token
-		// and let the parser reinterpret when in value context.
-		return [new Token(TokenType.IDENTIFIER, value, startLine, startColumn)];
+		return [makeTokenAt(TokenType.IDENTIFIER, value, startLine, startColumn)];
 	}
 
-	private function isBareKeyChar(code:Int):Bool
+	private inline function isBareKeyChar(code:Int):Bool
 		return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code == 95 || code == 45;
 
 	private function isValidBareKey(value:String):Bool {
-		if (value.length == 0)
+		var len = value.length;
+		if (len == 0)
 			return false;
-
-		for (i in 0...value.length)
+		for (i in 0...len)
 			if (!isBareKeyChar(value.charCodeAt(i)))
 				return false;
-
 		return true;
 	}
 
-	private function isInteger(value:String):Bool
-		return (value == "+0" || value == "-0")
-			|| (INT_RE.match(value) || HEX_INT_RE.match(value) || OCT_INT_RE.match(value) || BIN_INT_RE.match(value));
+	private function isInteger(value:String):Bool {
+		var len = value.length;
+		if (len == 0)
+			return false;
 
-	private function isFloat(value:String):Bool
+		// Fast path for +0 and -0
+		if (len == 2) {
+			var c0 = value.charCodeAt(0);
+			if ((c0 == 43 || c0 == 45) && value.charCodeAt(1) == 48)
+				return true;
+		}
+
+		var i = 0;
+		var c = value.charCodeAt(0);
+		if (c == 43 || c == 45) {
+			if (len == 1)
+				return false;
+			i = 1;
+			c = value.charCodeAt(1);
+		}
+
+		if (c == 48) {
+			if (len == i + 1)
+				return true;
+			var next = value.charCodeAt(i + 1);
+			if (next == 120)
+				return HEX_INT_RE.match(value);
+			if (next == 111)
+				return OCT_INT_RE.match(value);
+			if (next == 98)
+				return BIN_INT_RE.match(value);
+			return false;
+		}
+
+		if (c < 49 || c > 57)
+			return false;
+
+		// Fast manual validation of decimal integer to avoid regex overhead
+		for (j in i + 1...len) {
+			var ch = value.charCodeAt(j);
+			if (ch == 95) {
+				if (j + 1 >= len)
+					return false;
+				var nxt = value.charCodeAt(j + 1);
+				if (nxt < 48 || nxt > 57)
+					return false;
+			} else if (ch < 48 || ch > 57) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private function isFloat(value:String):Bool {
+		var len = value.length;
+		if (len < 3)
+			return false;
+
+		// Fast path for inf / nan
+		var start = 0;
+		var c0 = value.charCodeAt(0);
+		if (c0 == 43 || c0 == 45) {
+			if (len == 3)
+				return false;
+			start = 1;
+		}
+		if (len - start == 3) {
+			var s = value.substr(start, 3);
+			if (s == "inf" || s == "nan")
+				return true;
+		}
+
+		// Fast reject: must contain . e or E to be a float
+		var mightBeFloat = false;
+		for (i in start...len) {
+			var c = value.charCodeAt(i);
+			if (c == 46 || c == 101 || c == 69) {
+				mightBeFloat = true;
+				break;
+			}
+		}
+		if (!mightBeFloat)
+			return false;
+
 		return FLOAT_RE.match(value) || EXPONENT_RE.match(value) || INF_NAN_RE.match(value);
+	}
 
 	private function isDateTime(value:String):Bool {
+		var len = value.length;
+		if (len < 5)
+			return false;
+
+		// Fast reject: must contain date/time delimiter characters
+		var hasDtChar = false;
+		for (i in 0...len) {
+			var c = value.charCodeAt(i);
+			if (c == 45 || c == 58 || c == 84 || c == 116 || c == 32) {
+				hasDtChar = true;
+				break;
+			}
+		}
+		if (!hasDtChar)
+			return false;
+
 		if (DATE_RE.match(value))
 			return isValidDate(Std.parseInt(DATE_RE.matched(1)), Std.parseInt(DATE_RE.matched(2)), Std.parseInt(DATE_RE.matched(3)));
 
@@ -552,14 +620,12 @@ final class Lexer {
 	private function isValidDate(year:Int, month:Int, day:Int):Bool {
 		if (year < 1 || year > 9999 || month < 1 || month > 12 || day < 1)
 			return false;
-
 		var days = switch (month) {
 			case 1 | 3 | 5 | 7 | 8 | 10 | 12: 31;
 			case 4 | 6 | 9 | 11: 30;
 			case 2: isLeapYear(year) ? 29 : 28;
 			default: 0;
 		}
-
 		return day <= days;
 	}
 

@@ -4,7 +4,7 @@ import paopao.toml.Toml;
 import haxe.io.Bytes;
 import Sys;
 
-class Main {
+class MainTestAll {
 	static function main() {
 		var root = "toml-test/tests";
 		var manifest = File.getContent('$root/files-toml-1.1.0').split("\n");
