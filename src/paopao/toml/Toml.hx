@@ -4,7 +4,8 @@ import paopao.toml.Parser;
 import paopao.toml.Lexer;
 import sys.io.File;
 
-class Toml {
+@:analyzer(optimize, local_dce, fusion, user_var_fusion)
+final class Toml {
 	/**
 	 * Parse TOML text.
 	 */

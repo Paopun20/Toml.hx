@@ -1,5 +1,8 @@
 # Changelog
 
+## Dev Release (464c469...dev)
+- (now) refactor Lexer and Parser for improved error handling, and enhance Writer functionality
+
 ## Release 1.0.8 (Commits: ab0b4e8...464c469)
 
 ### Performance

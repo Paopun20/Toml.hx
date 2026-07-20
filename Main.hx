@@ -83,5 +83,7 @@ class Main {
 			var ast = new Parser(tokens).parse();
 			Writer.write(ast);
 		});
+
+		File.saveContent("Example-DTester.toml", Writer.write(ast));
 	}
 }

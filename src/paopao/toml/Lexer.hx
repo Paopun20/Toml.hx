@@ -126,19 +126,11 @@ final class Lexer {
 		return c;
 	}
 
-	private inline function makeToken(type:TokenType, value:String):Token {
-		final buf = (new StringBuf());
-		buf.add(value);
-		return {
-			type: type,
-			value: buf,
-			line: line,
-			column: column
-		};
-	}
+	private inline function makeToken(type:TokenType, value:String):Token
+		return makeTokenAt(type, value, this.line, this.column);
 
 	private inline function makeTokenAt(type:TokenType, value:String, line:UInt, column:UInt):Token {
-		final buf = (new StringBuf());
+		final buf = new StringBuf();
 		buf.add(value);
 		return {
 			type: type,
@@ -149,7 +141,10 @@ final class Lexer {
 	}
 
 	private inline function error(message:String):TomlError
-		return new TomlError(message, line, column);
+		return new TomlError(source, message, line, column);
+
+	private inline function errorAt(message:String, line:UInt, column:UInt):TomlError
+		return new TomlError(source, message, line, column);
 
 	private function skipComment():Void {
 		while (!isAtEnd()) {
@@ -168,7 +163,7 @@ final class Lexer {
 		var codepoint = 0;
 		for (i in 0...length) {
 			if (isAtEnd())
-				throw new TomlError("Unexpected end of unicode escape", line, column);
+				throw error("Unexpected end of unicode escape");
 			var c = advance();
 			var code = c.charCodeAt(0);
 			var digit:Int;
@@ -179,11 +174,11 @@ final class Lexer {
 			else if (code >= 97 && code <= 102)
 				digit = code - 87;
 			else
-				throw new TomlError('Invalid hex digit "$c"', line, column);
+				throw error('Invalid hex digit "$c"');
 			codepoint = (codepoint << 4) | digit;
 		}
 		if (!isUnicodeScalarValue(codepoint))
-			throw new TomlError('Invalid unicode scalar U+${StringTools.hex(codepoint, length)}', line, column);
+			throw error('Invalid unicode scalar U+${StringTools.hex(codepoint, length)}');
 		if (codepoint <= 0xFFFF)
 			return String.fromCharCode(codepoint);
 		var value = codepoint - 0x10000;
@@ -252,7 +247,7 @@ final class Lexer {
 				return makeTokenAt(TokenType.STRING, buf.toString(), startLine, startColumn);
 
 			if (!multiline && ccode == 0x0A)
-				throw new TomlError("Newline in string", line, column);
+				throw error("Newline in string");
 
 			// Literal strings have no escaping.
 			if (literal) {
@@ -262,9 +257,9 @@ final class Lexer {
 					continue;
 				}
 				if (!isUnicodeScalarValue(ccode))
-					throw new TomlError("Invalid unicode scalar", line, column);
+					throw error("Invalid unicode scalar");
 				if (isDisallowedControlCode(ccode) && !(multiline && ccode == 0x0A))
-					throw new TomlError("Control character in string", line, column);
+					throw error("Control character in string");
 				buf.add(c);
 				continue;
 			}
@@ -272,7 +267,7 @@ final class Lexer {
 			// Escape sequences
 			if (ccode == 0x5C) { // '\\'
 				if (isAtEnd())
-					throw new TomlError("Unexpected end of string", line, column);
+					throw error("Unexpected end of string");
 
 				// Multiline string line continuation
 				if (multiline) {
@@ -326,7 +321,7 @@ final class Lexer {
 					case 0x55: // 'U'
 						buf.add(readUnicodeEscape(8));
 					default:
-						throw new TomlError('Invalid escape sequence \\$escaped', line, column);
+						throw error('Invalid escape sequence \\$escaped');
 				}
 				continue;
 			}
@@ -338,15 +333,15 @@ final class Lexer {
 			}
 
 			if (!isUnicodeScalarValue(ccode))
-				throw new TomlError("Invalid unicode scalar", line, column);
+				throw error("Invalid unicode scalar");
 
 			if (isDisallowedControlCode(ccode) && !(multiline && ccode == 0x0A))
-				throw new TomlError("Control character in string", line, column);
+				throw error("Control character in string");
 
 			buf.add(c);
 		}
 
-		throw new TomlError("Unterminated string", startLine, startColumn);
+		throw errorAt("Unterminated string", startLine, startColumn);
 	}
 
 	private inline function peekCode():Int {
@@ -424,7 +419,7 @@ final class Lexer {
 		var len = value.length;
 
 		if (len == 0 || value == "+")
-			throw new TomlError('Invalid bare key "$value"', startLine, startColumn);
+			throw errorAt('Invalid bare key "$value"', startLine, startColumn);
 
 		// Fast path: values with dots could be floats, datetimes, or dotted bare keys.
 		if (hasDot) {
@@ -467,7 +462,7 @@ final class Lexer {
 				return [makeTokenAt(TokenType.FLOAT, value, startLine, startColumn)];
 			if (isInteger(value))
 				return [makeTokenAt(TokenType.INTEGER, value, startLine, startColumn)];
-			throw new TomlError('Invalid bare key "$value"', startLine, startColumn);
+			throw errorAt('Invalid bare key "$value"', startLine, startColumn);
 		}
 
 		return [makeTokenAt(TokenType.IDENTIFIER, value, startLine, startColumn)];
@@ -540,7 +535,7 @@ final class Lexer {
 	}
 
 	private function isFloat(value:String):Bool {
-		var len = value.length;
+		var len: Int = value.length;
 		if (len < 3)
 			return false;
 
@@ -559,7 +554,7 @@ final class Lexer {
 		}
 
 		// Fast reject: must contain . e or E to be a float
-		var mightBeFloat = false;
+		var mightBeFloat: Bool = false;
 		for (i in start...len) {
 			var c = value.charCodeAt(i);
 			if (c == 46 || c == 101 || c == 69) {
@@ -632,10 +627,10 @@ final class Lexer {
 	private function isValidDateTime(year:Int, month:Int, day:Int, hour:Int, minute:Int, second:Int):Bool
 		return isValidDate(year, month, day) && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59;
 
-	private function isValidTime(hour:Int, minute:Int, second:Int):Bool
+	private inline function isValidTime(hour:Int, minute:Int, second:Int):Bool
 		return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59;
 
-	private static function looksLikeDatePrefix(s:String):Bool
+	private static inline function looksLikeDatePrefix(s:String):Bool
 		return s.length >= 10
 			&& s.charCodeAt(4) == 45 // '-'
 			&& s.charCodeAt(7) == 45 // '-'

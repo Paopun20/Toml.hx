@@ -5,11 +5,11 @@ PInt8 is Platform Int8
 */
 
 #if cpp
-typedef PInt8 = cpp.Int8;
+typedef PInt8 = cpp.UInt8;
 #elseif cs
-typedef PInt8 = cs.StdTypes.Int8;
+typedef PInt8 = cs.StdTypes.UInt8;
 #elseif java
-typedef PInt8 = java.StdTypes.Int8;
+typedef PInt8 = java.StdTypes.Int8; // java don't have UInt8
 #else
 typedef PInt8 = Int;
 #end

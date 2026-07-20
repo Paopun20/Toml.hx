@@ -1,16 +1,18 @@
 package paopao.toml;
 
+import haxe.ds.StringMap;
 import Reflect;
 import Type;
 import paopao.toml.TomlDateTime;
+
 using StringTools;
 
 @:analyzer(optimize, local_dce, fusion, user_var_fusion)
 final class Parser {
 	private final tokens:Array<Token>;
-	private final definedTables:Map<String, Bool> = [];
-	private final arrayTables:Map<String, Bool> = [];
-	private final sealedTables:Map<String, String> = [];
+	private final definedTables:StringMap<Bool> = new StringMap<Bool>();
+	private final arrayTables:StringMap<Bool> = new StringMap<Bool>();
+	private final sealedTables:StringMap<String> = new StringMap<String>();
 	private var current:Int = 0;
 	private var currentTablePath:String = "";
 
@@ -592,7 +594,7 @@ final class Parser {
 
 	private function parseInlineTable():Dynamic {
 		var obj:Dynamic = {};
-		var sealedKeys:Map<String, Bool> = [];
+		var sealedKeys:StringMap<Bool> = new StringMap<Bool>();
 
 		skipNewlines();
 
@@ -747,5 +749,5 @@ final class Parser {
 		return path == "" ? [] : path.split(".");
 
 	private function error(token:Token, message:String):TomlError
-		return (new TomlError(message, token.line, token.column));
+		return (new TomlError(null, message, token.line, token.column));
 }
